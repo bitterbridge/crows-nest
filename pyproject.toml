@@ -32,6 +32,7 @@ dependencies = [
     "aiosqlite>=0.19.0",
     "hypothesis>=6.0.0",
     "hypothesis-jsonschema>=0.23.0",
+    "anthropic>=0.79.0",
 ]
 
 [project.optional-dependencies]
@@ -92,6 +93,7 @@ select = [
     "LOG",    # flake8-logging
 ]
 ignore = [
+    "PLR0911",  # too many return statements - sometimes needed in schema generators
     "PLR0913",  # too many arguments - sometimes necessary
     "PLR2004",  # magic value comparison - too noisy
 ]
@@ -103,6 +105,12 @@ ignore = [
     "PLR2004",  # magic values fine in tests
     "S106",     # hardcoded passwords fine in tests
     "PLC0415",  # import not at top-level - fine in tests for isolation
+]
+"src/crows_nest/agents/llm.py" = [
+    "PLC0415",  # lazy imports for optional dependencies (instructor, anthropic, openai)
+]
+"src/crows_nest/mocks/provider.py" = [
+    "PLC0415",  # lazy imports for optional dependencies
 ]
 
 [tool.ruff.lint.isort]
@@ -138,8 +146,17 @@ disable_error_code = ["no-untyped-def"]
 
 [[tool.mypy.overrides]]
 module = [
+    "anthropic",
+    "anthropic.*",
     "atomic_agents.*",
+    "hypothesis",
+    "hypothesis.*",
+    "hypothesis_jsonschema",
     "hypothesis_jsonschema.*",
+    "instructor",
+    "instructor.*",
+    "openai",
+    "openai.*",
     "opentelemetry.*",
     "structlog.*",
     "uvicorn.*",
