@@ -1,0 +1,60 @@
+# Crow's Nest Configuration
+# Copy this file to config.toml and customize as needed.
+# Environment variables override these values (prefix: CROWS_NEST_)
+
+[general]
+# Log level: DEBUG, INFO, WARNING, ERROR, CRITICAL
+log_level = "INFO"
+
+# Enable JSON structured logging (recommended for production)
+json_logs = false
+
+[database]
+# SQLite database path (relative to working directory)
+path = "crows_nest.db"
+
+[api]
+# API server host
+host = "127.0.0.1"
+
+# API server port
+port = 8000
+
+# Enable CORS (set origins in production)
+cors_enabled = true
+cors_origins = ["*"]
+
+[llm]
+# LLM provider: "anthropic", "openai", "mock"
+provider = "mock"
+
+# Model to use (provider-specific)
+model = "claude-sonnet-4-20250514"
+
+# Maximum tokens for responses
+max_tokens = 1000
+
+# Temperature for generation
+temperature = 0.7
+
+[tracing]
+# Enable OpenTelemetry tracing
+enabled = false
+
+# OTLP endpoint for trace export
+otlp_endpoint = "http://localhost:4317"
+
+# Service name for traces
+service_name = "crows-nest"
+
+[capabilities]
+# Default capabilities granted to root orchestrator
+# These are inherited (and restricted) by child agents
+root = [
+    "shell.run",
+    "shell.pipe",
+    "file.read",
+    "file.write",
+    "agent.create",
+    "agent.run",
+]
