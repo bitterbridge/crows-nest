@@ -1,5 +1,16 @@
 """Core thunk runtime and primitives."""
 
+from crows_nest.core.config import (
+    APISettings,
+    CapabilitiesSettings,
+    DatabaseSettings,
+    GeneralSettings,
+    LLMSettings,
+    Settings,
+    TracingSettings,
+    clear_settings_cache,
+    get_settings,
+)
 from crows_nest.core.registry import (
     InvalidHandlerError,
     OperationAlreadyRegisteredError,
@@ -30,10 +41,15 @@ from crows_nest.core.thunk import (
 )
 
 __all__ = [
+    "APISettings",
+    "CapabilitiesSettings",
     "CapabilityError",
     "CyclicDependencyError",
+    "DatabaseSettings",
     "DependencyNotFoundError",
+    "GeneralSettings",
     "InvalidHandlerError",
+    "LLMSettings",
     "OperationAlreadyRegisteredError",
     "OperationInfo",
     "OperationNotFoundError",
@@ -42,6 +58,7 @@ __all__ = [
     "RuntimeError",
     "RuntimeEvent",
     "RuntimeEventData",
+    "Settings",
     "Thunk",
     "ThunkError",
     "ThunkMetadata",
@@ -50,6 +67,9 @@ __all__ = [
     "ThunkResult",
     "ThunkRuntime",
     "ThunkStatus",
+    "TracingSettings",
+    "clear_settings_cache",
     "get_global_registry",
+    "get_settings",
     "thunk_operation",
 ]

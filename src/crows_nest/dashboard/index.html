@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Crow's Nest Dashboard</title>
+    <link rel="stylesheet" href="/static/css/styles.css">
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+</head>
+<body>
+    <div class="app">
+        <!-- Sidebar Navigation -->
+        <nav class="sidebar">
+            <div class="sidebar-header">
+                <h1>Crow's Nest</h1>
+            </div>
+            <ul class="nav-menu">
+                <li class="nav-item active" data-view="overview">
+                    <span class="nav-icon">&#9632;</span>
+                    <span class="nav-text">Overview</span>
+                </li>
+                <li class="nav-item" data-view="thunks">
+                    <span class="nav-icon">&#9654;</span>
+                    <span class="nav-text">Thunks</span>
+                </li>
+                <li class="nav-item" data-view="agents">
+                    <span class="nav-icon">&#9679;</span>
+                    <span class="nav-text">Agents</span>
+                </li>
+                <li class="nav-item" data-view="queues">
+                    <span class="nav-icon">&#9776;</span>
+                    <span class="nav-text">Queues</span>
+                </li>
+                <li class="nav-item" data-view="events">
+                    <span class="nav-icon">&#9889;</span>
+                    <span class="nav-text">Events</span>
+                </li>
+                <li class="nav-item" data-view="config">
+                    <span class="nav-icon">&#9881;</span>
+                    <span class="nav-text">Config</span>
+                </li>
+            </ul>
+            <div class="sidebar-footer">
+                <div class="connection-status" id="connectionStatus">
+                    <span class="status-dot disconnected"></span>
+                    <span>Disconnected</span>
+                </div>
+            </div>
+        </nav>
+
+        <!-- Main Content -->
+        <main class="content">
+            <!-- Overview View -->
+            <section id="overview-view" class="view active">
+                <header class="view-header">
+                    <h2>System Overview</h2>
+                    <button class="btn btn-refresh" onclick="refreshOverview()">Refresh</button>
+                </header>
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <div class="stat-value" id="stat-active-thunks">-</div>
+                        <div class="stat-label">Active Thunks</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value" id="stat-completed-thunks">-</div>
+                        <div class="stat-label">Completed</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value" id="stat-failed-thunks">-</div>
+                        <div class="stat-label">Failed</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value" id="stat-active-agents">-</div>
+                        <div class="stat-label">Active Agents</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value" id="stat-queue-depth">-</div>
+                        <div class="stat-label">Queue Depth</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value" id="stat-uptime">-</div>
+                        <div class="stat-label">Uptime</div>
+                    </div>
+                </div>
+                <div class="recent-events">
+                    <h3>Recent Events</h3>
+                    <div id="overview-events" class="event-list"></div>
+                </div>
+            </section>
+
+            <!-- Thunks View -->
+            <section id="thunks-view" class="view">
+                <header class="view-header">
+                    <h2>Thunks</h2>
+                    <div class="view-controls">
+                        <div class="view-tabs">
+                            <button class="tab-btn active" data-tab="list" onclick="switchThunkView('list')">List</button>
+                            <button class="tab-btn" data-tab="dag" onclick="switchThunkView('dag')">DAG</button>
+                        </div>
+                        <select id="thunk-filter" onchange="filterThunks()">
+                            <option value="">All Status</option>
+                            <option value="pending">Pending</option>
+                            <option value="success">Success</option>
+                            <option value="failure">Failed</option>
+                        </select>
+                        <button class="btn btn-refresh" onclick="refreshThunks()">Refresh</button>
+                    </div>
+                </header>
+                <!-- List View -->
+                <div id="thunk-list-view" class="thunk-tab-content active">
+                    <div class="thunk-container">
+                        <div id="thunk-list" class="thunk-list"></div>
+                        <div id="thunk-detail" class="thunk-detail">
+                            <p class="placeholder">Select a thunk to view details</p>
+                        </div>
+                    </div>
+                </div>
+                <!-- DAG View -->
+                <div id="thunk-dag-view" class="thunk-tab-content">
+                    <div class="dag-toolbar">
+                        <button class="btn btn-small" onclick="fitDAGToView()">Fit to View</button>
+                        <button class="btn btn-small" onclick="resetDAGZoom()">Reset Zoom</button>
+                    </div>
+                    <div class="dag-container-wrapper">
+                        <div id="thunk-dag-container" class="dag-container"></div>
+                        <div id="dag-node-detail" class="dag-detail">
+                            <p class="placeholder">Click a node to view details</p>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Agents View -->
+            <section id="agents-view" class="view">
+                <header class="view-header">
+                    <h2>Agents</h2>
+                    <div class="view-controls">
+                        <label>
+                            <input type="checkbox" id="show-terminated" onchange="refreshAgents()">
+                            Show Terminated
+                        </label>
+                        <button class="btn btn-refresh" onclick="refreshAgents()">Refresh</button>
+                    </div>
+                </header>
+                <div class="agent-container">
+                    <div id="agent-tree" class="agent-tree"></div>
+                    <div id="agent-detail" class="agent-detail">
+                        <p class="placeholder">Select an agent to view details</p>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Queues View -->
+            <section id="queues-view" class="view">
+                <header class="view-header">
+                    <h2>Message Queues</h2>
+                    <button class="btn btn-refresh" onclick="refreshQueues()">Refresh</button>
+                </header>
+                <div id="queue-list" class="queue-list"></div>
+            </section>
+
+            <!-- Events View -->
+            <section id="events-view" class="view">
+                <header class="view-header">
+                    <h2>Event Stream</h2>
+                    <div class="view-controls">
+                        <input type="text" id="event-filter" placeholder="Filter events..." oninput="filterEvents()">
+                        <button class="btn btn-clear" onclick="clearEvents()">Clear</button>
+                    </div>
+                </header>
+                <div id="event-stream" class="event-stream"></div>
+            </section>
+
+            <!-- Config View -->
+            <section id="config-view" class="view">
+                <header class="view-header">
+                    <h2>Configuration</h2>
+                    <button class="btn btn-refresh" onclick="refreshConfig()">Refresh</button>
+                </header>
+                <div id="config-display" class="config-display"></div>
+            </section>
+        </main>
+    </div>
+
+    <!-- Scripts -->
+    <script src="/static/js/utils/api.js"></script>
+    <script src="/static/js/websocket.js"></script>
+    <script src="/static/js/components/overview.js"></script>
+    <script src="/static/js/components/thunk-list.js"></script>
+    <script src="/static/js/components/thunk-dag.js"></script>
+    <script src="/static/js/components/agent-tree.js"></script>
+    <script src="/static/js/components/queue-monitor.js"></script>
+    <script src="/static/js/components/event-stream.js"></script>
+    <script src="/static/js/components/config-view.js"></script>
+    <script src="/static/js/app.js"></script>
+</body>
+</html>

@@ -85,3 +85,19 @@ jobs:
       - name: Test CLI in runtime image
         run: |
           docker run --rm crows-nest:latest crows-nest --version
+
+      - name: Test health endpoint
+        run: |
+          # Start server in background
+          docker run -d --name crows-nest-test -p 8000:8000 crows-nest:latest
+          # Wait for startup
+          sleep 5
+          # Test health endpoint
+          curl -f http://localhost:8000/health | grep -q "healthy"
+          # Test ready endpoint
+          curl -f http://localhost:8000/ready | grep -q "ready"
+          # Test metrics endpoint
+          curl -f http://localhost:8000/metrics | grep -q "crows_nest_uptime_seconds"
+          # Cleanup
+          docker stop crows-nest-test
+          docker rm crows-nest-test

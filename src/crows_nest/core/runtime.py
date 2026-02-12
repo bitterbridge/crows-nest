@@ -256,18 +256,34 @@ class ThunkRuntime:
             if thunk_id in self._results_cache:
                 continue
 
-            await self._emit(RuntimeEvent.THUNK_FORCING, thunk_id)
+            # Common event context
+            event_context = {
+                "operation": thunk.operation,
+                "trace_id": thunk.metadata.trace_id,
+            }
 
+            await self._emit(RuntimeEvent.THUNK_FORCING, thunk_id, event_context)
+
+            start_time = time.monotonic()
             result = await self._force_single(thunk)
+            duration_ms = int((time.monotonic() - start_time) * 1000)
             self._results_cache[thunk_id] = result
 
             if self.persistence:
                 await self.persistence.save_result(result)
 
             if result.is_success:
-                await self._emit(RuntimeEvent.THUNK_COMPLETED, thunk_id, {"value": result.value})
+                await self._emit(
+                    RuntimeEvent.THUNK_COMPLETED,
+                    thunk_id,
+                    {**event_context, "value": result.value, "duration_ms": duration_ms},
+                )
             else:
-                await self._emit(RuntimeEvent.THUNK_FAILED, thunk_id, {"error": result.error})
+                await self._emit(
+                    RuntimeEvent.THUNK_FAILED,
+                    thunk_id,
+                    {**event_context, "error": result.error, "duration_ms": duration_ms},
+                )
 
         # Return target result or last
         target_id = target or order[-1]
@@ -303,6 +319,13 @@ class ThunkRuntime:
 
             # Resolve dependencies in inputs
             resolved_inputs = _substitute_refs(thunk.inputs, self._results_cache)
+
+            # Pass capabilities to handler if it accepts _capabilities parameter
+            import inspect
+
+            sig = inspect.signature(op_info.handler)
+            if "_capabilities" in sig.parameters:
+                resolved_inputs["_capabilities"] = thunk.metadata.capabilities
 
             # Execute handler
             handler = op_info.handler
@@ -380,7 +403,7 @@ class ThunkRuntime:
         for listener in self._listeners[event]:
             try:  # noqa: SIM105 - can't use contextlib.suppress with await
                 await listener(event_data)
-            except Exception:  # noqa: S110
+            except Exception:  # noqa: S110  # nosec B110
                 # Don't let listener errors break execution
                 # TODO: Add structured logging here
                 pass

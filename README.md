@@ -1,6 +1,6 @@
 # Crow's Nest
 
-A thunk-based multi-agent system built on Python and atomic-agents.
+A thunk-based multi-agent system for composable, dynamic AI workflows.
 
 ## Overview
 
@@ -34,21 +34,92 @@ uv sync
 pip install -e ".[dev]"
 ```
 
-### Running
+### Basic Usage
 
 ```bash
-# CLI
-uv run crows-nest --help
-uv run cn --help  # alias
+# Execute a natural language task
+uv run crows-nest ask "list python files in src/"
 
-# API server
+# With verbose output
+uv run crows-nest ask "count lines in README.md" --verbose
+
+# Start the API server with dashboard
 uv run crows-nest serve
 
-# Or directly
-uv run uvicorn crows_nest.api:app --reload
+# Open dashboard at http://localhost:8000/dashboard
 ```
 
-### Configuration
+### CLI Commands
+
+```bash
+# Get help
+uv run crows-nest --help
+
+# Execute tasks
+uv run crows-nest ask "your task here"
+
+# Start API server
+uv run crows-nest serve --host 0.0.0.0 --port 8000
+
+# List registered operations
+uv run crows-nest ops
+
+# Check system info
+uv run crows-nest info
+```
+
+## Web Dashboard
+
+The built-in dashboard provides real-time visibility into the system:
+
+- **Overview**: System stats, active thunks, queue depths
+- **Thunks**: List and DAG visualization of thunk dependencies
+- **Agents**: Agent hierarchy and capabilities
+- **Queues**: Message queue monitoring
+- **Events**: Real-time event stream via WebSocket
+- **Config**: Current configuration display
+
+Access at `http://localhost:8000/dashboard` when the server is running.
+
+## API
+
+### REST Endpoints
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/ask` | POST | Execute natural language task |
+| `/thunks` | POST | Submit a thunk for execution |
+| `/thunks/{id}` | GET | Get thunk details |
+| `/thunks/{id}/result` | GET | Get thunk execution result |
+| `/ops` | GET | List registered operations |
+| `/health` | GET | Health check |
+| `/ready` | GET | Readiness check |
+| `/metrics` | GET | Prometheus metrics |
+
+### Example API Usage
+
+```bash
+# Execute a task
+curl -X POST http://localhost:8000/ask \
+  -H "Content-Type: application/json" \
+  -d '{"query": "list files in current directory"}'
+
+# Submit a thunk
+curl -X POST http://localhost:8000/thunks \
+  -H "Content-Type: application/json" \
+  -d '{
+    "operation": "shell.run",
+    "inputs": {"command": "ls", "args": ["-la"]},
+    "capabilities": ["shell.run"]
+  }'
+
+# Check health
+curl http://localhost:8000/health
+```
+
+## Configuration
+
+### Config File
 
 Copy the example configuration:
 
@@ -56,13 +127,28 @@ Copy the example configuration:
 cp config.example.toml config.toml
 ```
 
+### Environment Variables
+
 Environment variables override config file values. Use the `CROWS_NEST_` prefix:
 
 ```bash
+export CROWS_NEST_DATABASE__PATH=./data/crows_nest.db
+export CROWS_NEST_API__HOST=0.0.0.0
+export CROWS_NEST_API__PORT=8000
 export CROWS_NEST_LLM__PROVIDER=anthropic
 export CROWS_NEST_LLM__MODEL=claude-sonnet-4-20250514
-export CROWS_NEST_API__PORT=9000
 ```
+
+### Key Configuration Options
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `DATABASE__PATH` | `./crows_nest.db` | SQLite database path |
+| `API__HOST` | `127.0.0.1` | API server host |
+| `API__PORT` | `8000` | API server port |
+| `API__CORS_ENABLED` | `true` | Enable CORS |
+| `LLM__PROVIDER` | `mock` | LLM provider (mock, anthropic) |
+| `LOG__LEVEL` | `INFO` | Log level |
 
 ## Development
 
@@ -111,14 +197,70 @@ docker run -p 8000:8000 crows-nest:latest
 
 ```
 src/crows_nest/
-├── core/           # Thunk runtime, registry, evaluation
+├── core/           # Thunk runtime, registry, configuration
 ├── cli/            # Click CLI interface
-├── api/            # FastAPI server
-├── agents/         # Agent factory and operations
-├── persistence/    # Storage backends (SQLite, etc.)
+├── api/            # FastAPI server and dashboard API
+├── dashboard/      # Web dashboard (HTML, CSS, JS)
+├── agents/         # Agent factory and hierarchy
+├── orchestrator/   # Task planning and execution
+├── shell/          # Shell command operations
+├── persistence/    # Storage backends (SQLite)
+├── memory/         # Agent memory system
+├── queue/          # Message queue system
 ├── mocks/          # Mock LLM for testing
 ├── observability/  # Logging, tracing, metrics
 └── plugins/        # Plugin discovery and loading
+```
+
+### Core Components
+
+- **Thunk**: Immutable unit of computation with inputs, operation, and metadata
+- **Runtime**: Executes thunks, manages dependencies, caches results
+- **Registry**: Stores operation definitions and handlers
+- **Persistence**: Saves thunks and results to SQLite
+- **Orchestrator**: Converts natural language to execution plans
+
+## Plugin System
+
+Plugins can add new operations:
+
+```python
+# my_plugin.py
+from crows_nest.core.registry import thunk_operation
+
+@thunk_operation(
+    name="my.custom_op",
+    description="My custom operation",
+    required_capabilities=frozenset({"my.custom"}),
+)
+async def custom_operation(input_value: str) -> str:
+    return f"Processed: {input_value}"
+```
+
+Load plugins by placing them in the plugins directory or via configuration.
+
+## Security
+
+- **Shell Command Allowlist**: Only safe read-only commands allowed
+- **Capability System**: Operations require explicit capabilities
+- **Rate Limiting**: API endpoints are rate-limited (60/min, 10/sec)
+- **Input Validation**: All API inputs validated with length/pattern constraints
+- **Path Traversal Protection**: Working directories validated
+
+## Testing
+
+```bash
+# Run all tests
+uv run pytest
+
+# Run with coverage
+uv run pytest --cov --cov-report=html
+
+# Run specific test file
+uv run pytest tests/test_security.py -v
+
+# Run tests matching pattern
+uv run pytest -k "shell" -v
 ```
 
 ## License

@@ -40,6 +40,8 @@ dev = [
     "pytest>=8.0.0",
     "pytest-cov>=4.0.0",
     "pytest-asyncio>=0.23.0",
+    "pytest-benchmark>=4.0.0",
+    "pytest-playwright>=0.5.0",
     "ruff>=0.3.0",
     "mypy>=1.8.0",
     "bandit[toml]>=1.7.0",
@@ -101,6 +103,8 @@ ignore = [
 [tool.ruff.lint.per-file-ignores]
 "tests/**/*.py" = [
     "S101",     # assert is fine in tests
+    "S104",     # binding to all interfaces fine in tests (config tests)
+    "S108",     # temp paths fine in tests
     "ARG",      # unused arguments fine in tests (fixtures)
     "PLR2004",  # magic values fine in tests
     "S106",     # hardcoded passwords fine in tests
@@ -111,6 +115,28 @@ ignore = [
 ]
 "src/crows_nest/mocks/provider.py" = [
     "PLC0415",  # lazy imports for optional dependencies
+]
+"src/crows_nest/cli/__init__.py" = [
+    "PLC0415",  # lazy imports in CLI commands for faster startup
+]
+"src/crows_nest/observability/tracing.py" = [
+    "PLC0415",  # lazy import for optional OTLP exporter
+]
+"src/crows_nest/shell/verification.py" = [
+    "PLR0912",  # many branches needed for type validation
+    "SIM114",   # combined branches reduce readability for validation
+]
+"src/crows_nest/persistence/pool.py" = [
+    "ASYNC109",  # timeout parameter is valid API design
+]
+"src/crows_nest/persistence/sqlite.py" = [
+    "S608",  # SQL queries use parameterized placeholders, not injection
+]
+"tests/test_pool.py" = [
+    "SIM117",  # nested async with is clearer for connection pool tests
+]
+"tests/test_security.py" = [
+    "ERA001",  # comments explain what's being tested
 ]
 
 [tool.ruff.lint.isort]
@@ -180,10 +206,13 @@ markers = [
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",
     "integration: marks tests as integration tests",
     "e2e: marks tests as end-to-end tests",
+    "benchmark: marks tests as performance benchmarks",
+    "browser: marks tests as browser-based e2e tests requiring Playwright",
 ]
 filterwarnings = [
     "error",
     "ignore::DeprecationWarning:hypothesis.*",
+    "ignore::pytest.PytestUnraisableExceptionWarning",
 ]
 
 [tool.coverage.run]
@@ -220,4 +249,4 @@ skips = [
 # =============================================================================
 [tool.codespell]
 skip = ".git,*.lock,*.svg"
-ignore-words-list = "crate,ot"
+ignore-words-list = "crate,ot,memor"
