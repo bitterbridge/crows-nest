@@ -111,10 +111,10 @@ class TestLoadArtifact:
 
     def test_load_plugin_with_function(self) -> None:
         """Can load a plugin that defines a function."""
-        source = '''
+        source = """
 def add(a, b):
     return a + b
-'''
+"""
         artifact = make_artifact(source)
         approval = make_approval(artifact)
 
@@ -125,7 +125,7 @@ def add(a, b):
 
     def test_load_plugin_with_operation(self) -> None:
         """Loading a plugin registers its operations."""
-        source = '''
+        source = """
 from crows_nest.core.registry import thunk_operation
 
 @thunk_operation(
@@ -135,7 +135,7 @@ from crows_nest.core.registry import thunk_operation
 )
 async def greet(name: str = "World") -> dict:
     return {"message": f"Hello, {name}!"}
-'''
+"""
         artifact = make_artifact(source)
         approval = make_approval(artifact)
 
@@ -255,7 +255,7 @@ async def greet(name: str = "World") -> dict:
     def test_rollback_on_error(self) -> None:
         """Operations are unregistered if load fails after partial execution."""
         # This plugin registers an operation then fails
-        source = '''
+        source = """
 from crows_nest.core.registry import thunk_operation
 
 @thunk_operation(
@@ -268,7 +268,7 @@ async def will_fail() -> dict:
 
 # Now raise an error
 raise RuntimeError("Intentional failure")
-'''
+"""
         artifact = make_artifact(source)
         approval = make_approval(artifact)
 
@@ -431,7 +431,7 @@ class TestPluginLoadOperation:
     @pytest.mark.asyncio
     async def test_load_with_operations(self) -> None:
         """Operations are reported in result."""
-        source = '''
+        source = """
 from crows_nest.core.registry import thunk_operation
 
 @thunk_operation(
@@ -441,7 +441,7 @@ from crows_nest.core.registry import thunk_operation
 )
 async def loaded_op() -> dict:
     return {"status": "ok"}
-'''
+"""
         artifact = make_artifact(source)
         approval = make_approval(artifact)
 

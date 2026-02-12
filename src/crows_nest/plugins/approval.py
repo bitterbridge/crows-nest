@@ -417,9 +417,7 @@ async def user_approve(
         risk_level=RiskLevel(risk_level),
         context=context or {},
         expires_at=(
-            datetime.now(UTC) + timedelta(seconds=timeout_seconds)
-            if timeout_seconds
-            else None
+            datetime.now(UTC) + timedelta(seconds=timeout_seconds) if timeout_seconds else None
         ),
     )
 
