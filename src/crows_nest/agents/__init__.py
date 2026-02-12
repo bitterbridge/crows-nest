@@ -41,13 +41,11 @@ from crows_nest.agents.hierarchy import (
     reset_agent_registry,
 )
 from crows_nest.agents.llm import (
-    AtomicAgentsProvider,
     ChatMessage,
     CompletionResult,
-    LLMConfig,
+    InstructorProvider,
     LLMProvider,
-    LLMProviderType,
-    MockLLMProviderAdapter,
+    MockLLMProvider,
     create_provider,
 )
 from crows_nest.agents.operations import (
@@ -82,7 +80,6 @@ __all__ = [
     "AgentRunOutput",
     "AgentSpec",
     # LLM
-    "AtomicAgentsProvider",
     "BudgetError",
     "CapabilityBudget",
     "CapabilityNotAllowedError",
@@ -92,13 +89,12 @@ __all__ = [
     "EvaluatorSpec",
     "EvaluatorVote",
     "HiringCommittee",
+    "InstructorProvider",
     "InsufficientCapabilitiesError",
-    "LLMConfig",
     "LLMProvider",
-    "LLMProviderType",
     "MaxChildrenExceededError",
     "MaxDepthExceededError",
-    "MockLLMProviderAdapter",
+    "MockLLMProvider",
     "QuotaExceededError",
     "ResourceQuota",
     "SpawnDecision",

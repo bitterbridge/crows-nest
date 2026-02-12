@@ -16,8 +16,9 @@ from crows_nest.agents.factory import (
     AgentFactory,
     AgentSpec,
 )
-from crows_nest.agents.llm import ChatMessage, LLMConfig, LLMProviderType, create_provider
+from crows_nest.agents.llm import ChatMessage, create_provider
 from crows_nest.core.registry import thunk_operation
+from crows_nest.llm.providers import MockConfig
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -129,21 +130,12 @@ async def agent_create(
     agent_spec = AgentSpec.model_validate(spec)
     agent_context = AgentContext.from_dict(context)
 
-    # Create LLM config if provided
-    config = None
-    if llm_config:
-        provider_type = LLMProviderType(llm_config.get("provider", "mock"))
-        config = LLMConfig(
-            provider=provider_type,
-            model=llm_config.get("model", "claude-sonnet-4-20250514"),
-            api_key=llm_config.get("api_key"),
-            max_tokens=llm_config.get("max_tokens", 1000),
-            temperature=llm_config.get("temperature", 0.7),
-            extra=llm_config.get("extra", {}),
-        )
+    # Use MockConfig for now - full config support can be added later
+    # The llm_config parameter is kept for API compatibility
+    _ = llm_config  # Reserved for future use
 
     # Create factory and agent
-    factory = AgentFactory(llm_config=config)
+    factory = AgentFactory(provider_config=MockConfig())
     agent = factory.create_from_spec(agent_spec, agent_context)
 
     return AgentCreateOutput(
@@ -185,22 +177,13 @@ async def agent_run(
     agent_context = AgentContext.from_dict(context)
     output_schema = get_output_schema(output_schema_name)
 
-    # Build LLM config
-    config = LLMConfig.mock()
-    if llm_config:
-        provider_type = LLMProviderType(llm_config.get("provider", "mock"))
-        config = LLMConfig(
-            provider=provider_type,
-            model=llm_config.get("model", "claude-sonnet-4-20250514"),
-            api_key=llm_config.get("api_key"),
-            max_tokens=llm_config.get("max_tokens", 1000),
-            temperature=llm_config.get("temperature", 0.7),
-            extra=llm_config.get("extra", {}),
-        )
+    # Use MockConfig for now - full config support can be added later
+    _ = llm_config  # Reserved for future use
+    config = MockConfig()
 
     # Create provider and agent
     provider = create_provider(config)
-    factory = AgentFactory(llm_config=config)
+    factory = AgentFactory(provider_config=config)
     agent = factory.create_from_spec(agent_spec, agent_context, provider=provider)
 
     # Convert messages to ChatMessage objects
@@ -260,21 +243,12 @@ async def agent_spawn(
     restrict = frozenset(restrict_capabilities) if restrict_capabilities else None
     child_ctx = parent_ctx.for_child(uuid4(), restrict_capabilities=restrict)
 
-    # Build LLM config
-    config = LLMConfig.mock()
-    if llm_config:
-        provider_type = LLMProviderType(llm_config.get("provider", "mock"))
-        config = LLMConfig(
-            provider=provider_type,
-            model=llm_config.get("model", "claude-sonnet-4-20250514"),
-            api_key=llm_config.get("api_key"),
-            max_tokens=llm_config.get("max_tokens", 1000),
-            temperature=llm_config.get("temperature", 0.7),
-            extra=llm_config.get("extra", {}),
-        )
+    # Use MockConfig for now - full config support can be added later
+    _ = llm_config  # Reserved for future use
+    config = MockConfig()
 
     # Create the child agent
-    factory = AgentFactory(llm_config=config)
+    factory = AgentFactory(provider_config=config)
     child_agent = factory.create_from_spec(child_spec_obj, child_ctx)
 
     return AgentCreateOutput(

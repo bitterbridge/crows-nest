@@ -8,7 +8,8 @@ from uuid import uuid4
 
 import pytest
 
-from crows_nest.agents.llm import CompletionResult, LLMConfig
+from crows_nest.agents.llm import CompletionResult
+from crows_nest.llm import MockConfig
 from crows_nest.plugins.generation import (
     GeneratedOperation,
     GeneratedParameter,
@@ -41,14 +42,14 @@ class TestLLMProviderConfiguration:
 
     def test_configure_provider(self) -> None:
         """Configuring provider allows getting it."""
-        config = LLMConfig.mock()
+        config = MockConfig()
         configure_llm_provider(config)
         provider = get_llm_provider()
         assert provider is not None
 
     def test_reset_provider(self) -> None:
         """Resetting provider clears configuration."""
-        config = LLMConfig.mock()
+        config = MockConfig()
         configure_llm_provider(config)
         reset_llm_provider()
         with pytest.raises(RuntimeError, match="not configured"):
@@ -81,7 +82,7 @@ class TestPluginGenerate:
         with actual LLMs handle this properly.
         """
         # Configure mock provider
-        config = LLMConfig.mock(seed=42)
+        config = MockConfig()
         configure_llm_provider(config)
 
         result = await plugin_generate(

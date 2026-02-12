@@ -13,7 +13,8 @@ from uuid import UUID, uuid4
 
 from pydantic import BaseModel, Field
 
-from crows_nest.agents.llm import LLMConfig, LLMProvider, create_provider
+from crows_nest.agents.llm import LLMProvider, create_provider
+from crows_nest.llm.providers import MockConfig, ProviderConfig
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -229,7 +230,7 @@ class AgentFactory:
     appropriate LLM providers and contexts.
 
     Example:
-        factory = AgentFactory(llm_config=LLMConfig.mock())
+        factory = AgentFactory(provider_config=MockConfig())
         factory.register(AgentSpec(name="assistant", ...))
 
         context = AgentContext.create(capabilities=frozenset(["read", "write"]))
@@ -238,16 +239,16 @@ class AgentFactory:
 
     def __init__(
         self,
-        llm_config: LLMConfig | None = None,
+        provider_config: ProviderConfig | None = None,
         specs: Sequence[AgentSpec] | None = None,
     ) -> None:
         """Initialize the factory.
 
         Args:
-            llm_config: Default LLM configuration for created agents.
+            provider_config: Default provider configuration for created agents.
             specs: Initial agent specifications to register.
         """
-        self._llm_config = llm_config or LLMConfig.mock()
+        self._provider_config = provider_config or MockConfig()
         self._specs: dict[str, AgentSpec] = {}
         self._provider: LLMProvider | None = None
 
@@ -259,7 +260,7 @@ class AgentFactory:
     def provider(self) -> LLMProvider:
         """Get or create the LLM provider (lazy initialization)."""
         if self._provider is None:
-            self._provider = create_provider(self._llm_config)
+            self._provider = create_provider(self._provider_config)
         return self._provider
 
     def register(self, spec: AgentSpec) -> None:

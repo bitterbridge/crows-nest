@@ -5,14 +5,13 @@ Generates plugin code from natural language specifications using an LLM.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
 from pydantic import BaseModel, Field
 
 from crows_nest.agents.llm import (
     ChatMessage,
-    LLMConfig,
     LLMProvider,
     create_provider,
 )
@@ -22,6 +21,9 @@ from crows_nest.plugins.artifacts import (
     ParameterSpec,
     PluginArtifact,
 )
+
+if TYPE_CHECKING:
+    from crows_nest.llm.providers import ProviderConfig
 
 # Pydantic models for structured LLM output
 
@@ -68,7 +70,7 @@ class GeneratedPlugin(BaseModel):
 
 # Global LLM provider (lazily initialized)
 _llm_provider: LLMProvider | None = None
-_llm_config: LLMConfig | None = None
+_llm_config: ProviderConfig | None = None
 
 
 def get_llm_provider() -> LLMProvider:
@@ -86,7 +88,7 @@ def get_llm_provider() -> LLMProvider:
     return _llm_provider
 
 
-def configure_llm_provider(config: LLMConfig) -> None:
+def configure_llm_provider(config: ProviderConfig) -> None:
     """Configure the global LLM provider.
 
     Args:

@@ -12,7 +12,6 @@ from crows_nest.agents import (
     AgentContext,
     AgentFactory,
     AgentSpec,
-    LLMConfig,
     TextResponse,
     ToolSpec,
     agent_create,
@@ -22,6 +21,7 @@ from crows_nest.agents import (
     register_output_schema,
 )
 from crows_nest.core.thunk import ThunkMetadata
+from crows_nest.llm import MockConfig
 
 
 class CustomResponse(BaseModel):
@@ -262,7 +262,7 @@ class TestAgent:
         """Create a basic agent."""
         from crows_nest.agents.llm import create_provider
 
-        config = LLMConfig.mock(seed=42)
+        config = MockConfig()
         provider = create_provider(config)
         return Agent(spec=basic_spec, provider=provider, context=basic_context)
 
@@ -309,7 +309,7 @@ class TestAgentFactory:
     @pytest.fixture
     def factory(self):
         """Create a factory with mock provider."""
-        return AgentFactory(llm_config=LLMConfig.mock(seed=42))
+        return AgentFactory(provider_config=MockConfig())
 
     @pytest.fixture
     def assistant_spec(self):
