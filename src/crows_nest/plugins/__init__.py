@@ -16,6 +16,12 @@ from crows_nest.plugins.artifacts import (
     Violation,
     ViolationType,
 )
+from crows_nest.plugins.generation import (
+    configure_llm_provider,
+    get_llm_provider,
+    plugin_generate,
+    reset_llm_provider,
+)
 from crows_nest.plugins.loader import (
     DEFAULT_PLUGIN_DIR,
     ENTRY_POINT_GROUP,
@@ -60,10 +66,14 @@ __all__ = [
     "VerificationReport",
     "Violation",
     "ViolationType",
+    "configure_llm_provider",
     "get_artifact_storage",
+    "get_llm_provider",
     "get_loaded_plugins",
     "get_plugin_loader",
     "load_plugins",
+    "plugin_generate",
     "reset_artifact_storage",
+    "reset_llm_provider",
     "reset_plugin_loader",
 ]
