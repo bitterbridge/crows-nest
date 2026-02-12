@@ -123,3 +123,6 @@ uv.lock
 *.pem
 *.key
 secrets/
+
+# Plugin artifact storage from tests
+plugins/
