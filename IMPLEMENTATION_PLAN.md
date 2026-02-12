@@ -421,6 +421,100 @@ class PostgresBackend(PersistenceBackend):
 
 ---
 
+## Stage 17: Dynamic Plugin Foundation
+
+**Goal:** Enable AI agents to generate and store plugin code for new capabilities.
+
+**Success Criteria:**
+- [x] PluginArtifact model for storing generated code
+- [x] VerificationReport model for sandbox results
+- [x] ApprovalDecision model for human approval
+- [x] LoadResult model for plugin loading outcomes
+- [x] Filesystem-based artifact storage
+- [x] plugin.generate thunk operation
+- [x] Pydantic models for LLM structured output
+- [x] Comprehensive tests (32 artifact tests, 10 generation tests)
+
+**Status:** Complete
+
+**Completed Components:**
+- src/crows_nest/plugins/artifacts.py - Data models for the plugin pipeline
+- src/crows_nest/plugins/storage.py - Filesystem persistence for artifacts
+- src/crows_nest/plugins/generation.py - LLM-powered code generation
+- tests/test_plugin_artifacts.py - 32 tests for models and storage
+- tests/test_plugin_generation.py - 10 tests for generation
+
+---
+
+## Stage 18: Sandbox Verification
+
+**Goal:** Safely execute and analyze generated plugin code before loading.
+
+**Success Criteria:**
+- [x] StaticAnalyzer for AST-based code analysis
+- [x] Sandbox for isolated code execution
+- [x] PluginVerifier for comprehensive verification
+- [x] Violation detection (dangerous code patterns, disallowed imports)
+- [x] Test case execution in sandbox
+- [x] Risk level assessment
+- [x] sandbox.verify thunk operation
+- [x] 24 tests for sandbox and verification
+
+**Status:** Complete
+
+**Completed Components:**
+- src/crows_nest/plugins/sandbox.py - Isolated execution environment
+- src/crows_nest/plugins/verification.py - sandbox.verify operation
+- tests/test_plugin_sandbox.py - 24 tests for sandbox functionality
+
+---
+
+## Stage 19: Approval Flow
+
+**Goal:** Human-in-the-loop approval for loading AI-generated plugins.
+
+**Success Criteria:**
+- [x] ApprovalRequest dataclass for approval workflow
+- [x] ApprovalHandler protocol for different UIs
+- [x] AutoApprovalHandler for testing/automation
+- [x] QueuedApprovalHandler for async approvals
+- [x] Approval caching with different scopes
+- [x] user.approve thunk operation
+- [x] 35 tests for approval system
+
+**Status:** Complete
+
+**Completed Components:**
+- src/crows_nest/plugins/approval.py - Approval system with handlers
+- tests/test_approval.py - 35 tests for approval functionality
+
+---
+
+## Stage 20: Plugin Loading
+
+**Goal:** Safely load verified and approved plugins into the runtime.
+
+**Success Criteria:**
+- [x] plugin.load thunk operation
+- [x] Integration with existing plugin loader
+- [x] Namespace isolation for loaded plugins
+- [x] Capability enforcement from approval
+- [x] Rollback on load failure
+- [x] Tests for loading pipeline (25 tests)
+
+**Status:** Complete
+
+**Completed Components:**
+- src/crows_nest/plugins/loading.py - Plugin loading with:
+  - plugin.load thunk operation
+  - load_artifact() sync helper
+  - Approval validation (expired, denied, hash mismatch)
+  - Operation rollback on load failure
+  - unload_plugin() utility
+- tests/test_plugin_loading.py - 25 tests for loading functionality
+
+---
+
 ## Implementation Order
 
 ```

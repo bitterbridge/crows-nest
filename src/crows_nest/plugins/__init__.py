@@ -1,5 +1,16 @@
 """Plugin discovery and loading."""
 
+from crows_nest.plugins.approval import (
+    ApprovalHandler,
+    ApprovalRequest,
+    AutoApprovalHandler,
+    QueuedApprovalHandler,
+    check_cached_approval,
+    configure_approval_handler,
+    get_approval_handler,
+    reset_approval_handler,
+    user_approve,
+)
 from crows_nest.plugins.artifacts import (
     ApprovalDecision,
     ApprovalScope,
@@ -36,6 +47,11 @@ from crows_nest.plugins.loader import (
     load_plugins,
     reset_plugin_loader,
 )
+from crows_nest.plugins.loading import (
+    load_artifact,
+    plugin_load,
+    unload_plugin,
+)
 from crows_nest.plugins.sandbox import (
     PluginVerifier,
     Sandbox,
@@ -58,8 +74,11 @@ __all__ = [
     "DEFAULT_PLUGIN_DIR",
     "ENTRY_POINT_GROUP",
     "ApprovalDecision",
+    "ApprovalHandler",
+    "ApprovalRequest",
     "ApprovalScope",
     "ArtifactStorage",
+    "AutoApprovalHandler",
     "LoadResult",
     "LoadScope",
     "OperationSpec",
@@ -72,6 +91,7 @@ __all__ = [
     "PluginNotFoundError",
     "PluginSource",
     "PluginVerifier",
+    "QueuedApprovalHandler",
     "ResourceUsage",
     "RiskLevel",
     "Sandbox",
@@ -84,16 +104,24 @@ __all__ = [
     "VerificationReport",
     "Violation",
     "ViolationType",
+    "check_cached_approval",
+    "configure_approval_handler",
     "configure_llm_provider",
+    "get_approval_handler",
     "get_artifact_storage",
     "get_llm_provider",
     "get_loaded_plugins",
     "get_plugin_loader",
+    "load_artifact",
     "load_plugins",
     "plugin_generate",
+    "plugin_load",
+    "reset_approval_handler",
     "reset_artifact_storage",
     "reset_llm_provider",
     "reset_plugin_loader",
     "sandbox_verify",
+    "unload_plugin",
+    "user_approve",
     "verify_artifact",
 ]
