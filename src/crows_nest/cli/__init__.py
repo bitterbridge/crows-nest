@@ -282,7 +282,9 @@ def ops() -> None:
 def ops_list() -> None:
     """List all registered operations."""
     from crows_nest.core import get_global_registry
+    from crows_nest.operations import register_all_operations
 
+    register_all_operations()
     registry = get_global_registry()
     operations = registry.list_operations_info()
 
