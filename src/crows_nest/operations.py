@@ -16,7 +16,8 @@ def register_all_operations() -> None:
 
     Call this at application startup to ensure all operations are available.
     """
-    # Core introspection (system.*)
+    # Core operations (system.*, thunk.*)
+    from crows_nest.core import combinators as _combinators  # noqa: F401
     from crows_nest.core import introspection as _introspection  # noqa: F401
 
     # Shell operations (shell.*, verify.*)

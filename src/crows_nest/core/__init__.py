@@ -1,6 +1,7 @@
 """Core thunk runtime and primitives."""
 
-# Import introspection to register system.* operations
+# Import to register operations at module load time
+from crows_nest.core import combinators as _combinators  # noqa: F401
 from crows_nest.core import introspection as _introspection  # noqa: F401
 from crows_nest.core.config import (
     APISettings,
