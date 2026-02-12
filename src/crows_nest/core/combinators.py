@@ -7,10 +7,13 @@ These are the building blocks for complex workflows.
 from __future__ import annotations
 
 import asyncio
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from crows_nest.core.registry import get_global_registry, thunk_operation
 from crows_nest.core.thunk import Thunk
+
+if TYPE_CHECKING:
+    from crows_nest.core.context import ThunkContext
 
 
 @thunk_operation(
@@ -22,6 +25,7 @@ async def thunk_sequence(
     thunks: list[dict[str, Any]],
     initial_context: dict[str, Any] | None = None,
     stop_on_failure: bool = True,
+    _context: ThunkContext | None = None,
 ) -> dict[str, Any]:
     """Execute thunks in sequence.
 
@@ -29,6 +33,7 @@ async def thunk_sequence(
         thunks: List of thunk specifications, each with 'operation' and 'inputs'.
         initial_context: Optional context passed to the first thunk.
         stop_on_failure: If True, stop sequence on first failure.
+        _context: Execution context for cancellation (injected by runtime).
 
     Returns:
         Dict with results from each thunk and final output.
@@ -47,6 +52,10 @@ async def thunk_sequence(
     final_output: Any = None
 
     for i, thunk_spec in enumerate(thunks):
+        # Check for cancellation before each step
+        if _context:
+            _context.raise_if_cancelled()
+
         operation = thunk_spec.get("operation")
         inputs = thunk_spec.get("inputs", {})
 
@@ -66,7 +75,7 @@ async def thunk_sequence(
         merged_inputs = {**initial_context, **inputs} if i == 0 and initial_context else inputs
 
         thunk = Thunk.create(operation=operation, inputs=merged_inputs)
-        result = await runtime.force(thunk)
+        result = await runtime.force(thunk, context=_context)
 
         if result.is_failure:
             error_msg = result.error.message if result.error else "Unknown error"
@@ -311,6 +320,7 @@ async def thunk_retry(
     exponential_backoff: bool = True,
     max_delay_seconds: float = 60.0,
     retry_on: list[str] | None = None,
+    _context: ThunkContext | None = None,
 ) -> dict[str, Any]:
     """Retry a thunk with backoff.
 
@@ -322,6 +332,7 @@ async def thunk_retry(
         exponential_backoff: If True, double delay after each failure.
         max_delay_seconds: Maximum delay between retries.
         retry_on: List of error substrings to retry on (None = retry all).
+        _context: Execution context for cancellation (injected by runtime).
 
     Returns:
         Dict with result or final error after all attempts.
@@ -342,9 +353,13 @@ async def thunk_retry(
     delay = base_delay_seconds
 
     for attempt in range(1, max_attempts + 1):
+        # Check for cancellation before each attempt
+        if _context:
+            _context.raise_if_cancelled()
+
         # Create fresh thunk each attempt (new ID)
         thunk = Thunk.create(operation=operation, inputs=inputs)
-        result = await runtime.force(thunk)
+        result = await runtime.force(thunk, context=_context)
 
         if result.is_success:
             return {
@@ -678,6 +693,7 @@ async def thunk_reduce(
     accumulator_key: str = "accumulator",
     item_key: str = "item",
     extra_inputs: dict[str, Any] | None = None,
+    _context: ThunkContext | None = None,
 ) -> dict[str, Any]:
     """Reduce a collection with a thunk.
 
@@ -688,6 +704,7 @@ async def thunk_reduce(
         accumulator_key: Key name for accumulator in inputs.
         item_key: Key name for current item in inputs.
         extra_inputs: Additional inputs to include with each call.
+        _context: Execution context for cancellation (injected by runtime).
 
     Returns:
         Dict with final accumulated value.
@@ -708,6 +725,10 @@ async def thunk_reduce(
     steps: list[dict[str, Any]] = []
 
     for i, item in enumerate(items):
+        # Check for cancellation before each step
+        if _context:
+            _context.raise_if_cancelled()
+
         inputs = {
             accumulator_key: accumulator,
             item_key: item,
@@ -716,7 +737,7 @@ async def thunk_reduce(
             inputs.update(extra_inputs)
 
         thunk = Thunk.create(operation=operation, inputs=inputs)
-        result = await runtime.force(thunk)
+        result = await runtime.force(thunk, context=_context)
 
         if result.is_failure:
             error_msg = result.error.message if result.error else "Unknown error"
@@ -1562,6 +1583,7 @@ async def thunk_pipe(
     initial_input: dict[str, Any] | None = None,
     output_key: str = "result",
     input_key: str = "input",
+    _context: ThunkContext | None = None,
 ) -> dict[str, Any]:
     """Pipe data through a chain of thunks.
 
@@ -1573,6 +1595,7 @@ async def thunk_pipe(
         initial_input: Initial data to pass to first thunk.
         output_key: Key to extract from each output (or None for whole output).
         input_key: Key name to use when passing to next thunk.
+        _context: Execution context for cancellation (injected by runtime).
 
     Returns:
         Dict with final output and pipeline history.
@@ -1596,6 +1619,10 @@ async def thunk_pipe(
     history: list[dict[str, Any]] = []
 
     for i, thunk_spec in enumerate(thunks):
+        # Check for cancellation before each stage
+        if _context:
+            _context.raise_if_cancelled()
+
         operation = thunk_spec.get("operation")
         base_inputs = thunk_spec.get("inputs", {})
 
@@ -1614,7 +1641,7 @@ async def thunk_pipe(
             inputs = {**base_inputs, input_key: current_data}
 
         thunk = Thunk.create(operation=operation, inputs=inputs)
-        result = await runtime.force(thunk)
+        result = await runtime.force(thunk, context=_context)
 
         if result.is_failure:
             error_msg = result.error.message if result.error else "Unknown error"
@@ -1720,6 +1747,7 @@ async def thunk_repeat(
     stop_on_failure: bool = False,
     include_index: bool = False,
     index_key: str = "iteration",
+    _context: ThunkContext | None = None,
 ) -> dict[str, Any]:
     """Repeat a thunk multiple times.
 
@@ -1733,6 +1761,7 @@ async def thunk_repeat(
         stop_on_failure: If True, stop on first failure (sequential only).
         include_index: If True, include iteration index in inputs.
         index_key: Key name for the iteration index.
+        _context: Execution context for cancellation (injected by runtime).
 
     Returns:
         Dict with all results.
@@ -1755,7 +1784,7 @@ async def thunk_repeat(
             iter_inputs[index_key] = index
 
         thunk = Thunk.create(operation=operation, inputs=iter_inputs)
-        result = await runtime.force(thunk)
+        result = await runtime.force(thunk, context=_context)
 
         if result.is_failure:
             error_msg = result.error.message if result.error else "Unknown error"
@@ -1768,6 +1797,9 @@ async def thunk_repeat(
     else:
         results = []
         for i in range(times):
+            # Check for cancellation before each iteration (sequential only)
+            if _context:
+                _context.raise_if_cancelled()
             result = await run_one(i)
             results.append(result)
             if stop_on_failure and result["status"] == "failed":
@@ -1797,6 +1829,7 @@ async def thunk_while(
     max_iterations: int = 100,
     pass_output_to_condition: bool = False,
     pass_output_to_body: bool = False,
+    _context: ThunkContext | None = None,
 ) -> dict[str, Any]:
     """Loop while condition is true.
 
@@ -1809,6 +1842,7 @@ async def thunk_while(
         max_iterations: Safety limit to prevent infinite loops.
         pass_output_to_condition: Pass previous body output to condition.
         pass_output_to_body: Pass previous body output to next body execution.
+        _context: Execution context for cancellation (injected by runtime).
 
     Returns:
         Dict with all iteration results.
@@ -1840,7 +1874,7 @@ async def thunk_while(
                 cond_inputs = {**cond_inputs, "_previous": last_output}
 
         thunk = Thunk.create(operation=cond_op, inputs=cond_inputs)
-        result = await runtime.force(thunk)
+        result = await runtime.force(thunk, context=_context)
 
         if result.is_failure:
             return False
@@ -1864,7 +1898,7 @@ async def thunk_while(
                 body_inputs = {**body_inputs, "_previous": last_output}
 
         thunk = Thunk.create(operation=body_op, inputs=body_inputs)
-        result = await runtime.force(thunk)
+        result = await runtime.force(thunk, context=_context)
 
         if result.is_failure:
             error_msg = result.error.message if result.error else "Unknown error"
@@ -1872,6 +1906,10 @@ async def thunk_while(
         return True, result.value, None
 
     for i in range(max_iterations):
+        # Check for cancellation before each iteration
+        if _context:
+            _context.raise_if_cancelled()
+
         # Check condition
         should_continue = await check_condition()
         if not should_continue:
@@ -1921,6 +1959,7 @@ async def thunk_until(
     max_iterations: int = 100,
     check_before: bool = False,
     pass_output_to_condition: bool = True,
+    _context: ThunkContext | None = None,
 ) -> dict[str, Any]:
     """Loop until condition becomes true.
 
@@ -1933,6 +1972,7 @@ async def thunk_until(
         max_iterations: Safety limit to prevent infinite loops.
         check_before: If True, check condition before body (while-not).
         pass_output_to_condition: Pass body output to condition check.
+        _context: Execution context for cancellation (injected by runtime).
 
     Returns:
         Dict with all iteration results.
@@ -1964,7 +2004,7 @@ async def thunk_until(
                 cond_inputs = {**cond_inputs, "_result": last_output}
 
         thunk = Thunk.create(operation=cond_op, inputs=cond_inputs)
-        result = await runtime.force(thunk)
+        result = await runtime.force(thunk, context=_context)
 
         if result.is_failure:
             return True  # Stop on condition error
@@ -1988,7 +2028,7 @@ async def thunk_until(
             return False, None, "Missing 'operation' in body"
 
         thunk = Thunk.create(operation=body_op, inputs=body_inputs)
-        result = await runtime.force(thunk)
+        result = await runtime.force(thunk, context=_context)
 
         if result.is_failure:
             error_msg = result.error.message if result.error else "Unknown error"
@@ -1996,6 +2036,10 @@ async def thunk_until(
         return True, result.value, None
 
     for i in range(max_iterations):
+        # Check for cancellation before each iteration
+        if _context:
+            _context.raise_if_cancelled()
+
         # Check before (while-not style)
         if check_before:
             should_stop = await check_condition()

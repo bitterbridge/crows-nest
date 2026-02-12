@@ -16,6 +16,7 @@ from enum import Enum
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
+from crows_nest.core.context import ThunkContext
 from crows_nest.core.registry import OperationNotFoundError, ThunkRegistry
 from crows_nest.core.thunk import Thunk, ThunkError, ThunkRef, ThunkResult, ThunkStatus
 
@@ -31,6 +32,7 @@ class RuntimeEvent(Enum):
     THUNK_FORCING = "thunk.forcing"
     THUNK_COMPLETED = "thunk.completed"
     THUNK_FAILED = "thunk.failed"
+    THUNK_CANCELLED = "thunk.cancelled"
     DEPENDENCY_RESOLVED = "dependency.resolved"
 
 
@@ -204,21 +206,27 @@ class ThunkRuntime:
     _listeners: dict[RuntimeEvent, list[EventListener]] = field(default_factory=dict)
     _results_cache: dict[UUID, ThunkResult] = field(default_factory=dict)
 
-    async def force(self, thunk: Thunk) -> ThunkResult:
+    async def force(
+        self,
+        thunk: Thunk,
+        context: ThunkContext | None = None,
+    ) -> ThunkResult:
         """Force a single thunk, resolving dependencies first.
 
         Args:
             thunk: The thunk to force.
+            context: Optional execution context for cancellation and progress.
 
         Returns:
             The result of forcing the thunk.
         """
-        return await self.force_all({thunk.id: thunk}, target=thunk.id)
+        return await self.force_all({thunk.id: thunk}, target=thunk.id, context=context)
 
-    async def force_all(
+    async def force_all(  # noqa: PLR0912 - branches needed for event emission
         self,
         thunks: dict[UUID, Thunk],
         target: UUID | None = None,
+        context: ThunkContext | None = None,
     ) -> ThunkResult:
         """Force multiple thunks, resolving dependencies.
 
@@ -226,12 +234,20 @@ class ThunkRuntime:
             thunks: Map of thunk ID to thunk.
             target: If specified, return the result for this thunk.
                 Otherwise return result of the last thunk in topological order.
+            context: Optional execution context for cancellation and progress.
 
         Returns:
             The result of the target thunk.
+
+        Raises:
+            CancellationError: If the context's cancellation token is triggered.
         """
         if not thunks:
             raise ValueError("No thunks to force")
+
+        # Check for cancellation before starting
+        if context:
+            context.raise_if_cancelled()
 
         # Validate all dependencies exist
         for thunk in thunks.values():
@@ -256,6 +272,18 @@ class ThunkRuntime:
             if thunk_id in self._results_cache:
                 continue
 
+            # Check for cancellation before each thunk
+            if context and context.is_cancelled:
+                await self._emit(
+                    RuntimeEvent.THUNK_CANCELLED,
+                    thunk_id,
+                    {
+                        "operation": thunk.operation,
+                        "reason": context.cancellation.reason if context.cancellation else None,
+                    },
+                )
+                context.raise_if_cancelled()
+
             # Common event context
             event_context = {
                 "operation": thunk.operation,
@@ -265,7 +293,7 @@ class ThunkRuntime:
             await self._emit(RuntimeEvent.THUNK_FORCING, thunk_id, event_context)
 
             start_time = time.monotonic()
-            result = await self._force_single(thunk)
+            result = await self._force_single(thunk, context)
             duration_ms = int((time.monotonic() - start_time) * 1000)
             self._results_cache[thunk_id] = result
 
@@ -289,8 +317,17 @@ class ThunkRuntime:
         target_id = target or order[-1]
         return self._results_cache[target_id]
 
-    async def _force_single(self, thunk: Thunk) -> ThunkResult:
-        """Force a single thunk (dependencies must already be resolved)."""
+    async def _force_single(
+        self,
+        thunk: Thunk,
+        context: ThunkContext | None = None,
+    ) -> ThunkResult:
+        """Force a single thunk (dependencies must already be resolved).
+
+        Args:
+            thunk: The thunk to force.
+            context: Optional execution context for cancellation and progress.
+        """
         start_time = time.monotonic()
 
         try:
@@ -320,12 +357,14 @@ class ThunkRuntime:
             # Resolve dependencies in inputs
             resolved_inputs = _substitute_refs(thunk.inputs, self._results_cache)
 
-            # Pass capabilities to handler if it accepts _capabilities parameter
+            # Pass capabilities and context to handler if it accepts them
             import inspect
 
             sig = inspect.signature(op_info.handler)
             if "_capabilities" in sig.parameters:
                 resolved_inputs["_capabilities"] = thunk.metadata.capabilities
+            if "_context" in sig.parameters:
+                resolved_inputs["_context"] = context or ThunkContext.background()
 
             # Execute handler
             handler = op_info.handler
@@ -339,8 +378,8 @@ class ThunkRuntime:
                     await self.persistence.save_thunk(new_thunk)
                 await self._emit(RuntimeEvent.THUNK_CREATED, new_thunk.id)
 
-                # Recursively force the returned thunk
-                return await self.force(new_thunk)
+                # Recursively force the returned thunk with same context
+                return await self.force(new_thunk, context=context)
 
             return ThunkResult(
                 thunk_id=thunk.id,
