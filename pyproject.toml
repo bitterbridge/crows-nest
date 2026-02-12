@@ -142,6 +142,7 @@ ignore = [
 ]
 "src/crows_nest/core/combinators.py" = [
     "PLC0415",  # lazy import of runtime to avoid circular dependencies
+    "PLR0912",  # many branches needed for validation combinator
 ]
 "src/crows_nest/operations.py" = [
     "PLC0415",  # lazy imports to register operations on demand

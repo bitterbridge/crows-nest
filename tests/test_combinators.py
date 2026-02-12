@@ -5,7 +5,9 @@ from __future__ import annotations
 import pytest
 
 from crows_nest.core.combinators import (
+    thunk_catch,
     thunk_conditional,
+    thunk_ensure,
     thunk_fallback,
     thunk_map,
     thunk_parallel,
@@ -13,7 +15,9 @@ from crows_nest.core.combinators import (
     thunk_reduce,
     thunk_retry,
     thunk_sequence,
+    thunk_tap,
     thunk_timeout,
+    thunk_validate,
 )
 from crows_nest.core.registry import get_global_registry, thunk_operation
 
@@ -74,6 +78,32 @@ def _register_test_ops():
     async def check_flag(flag: bool) -> dict:
         return {"success": flag}
 
+    @thunk_operation(
+        name="test.noop",
+        description="Does nothing, returns empty dict.",
+        required_capabilities=frozenset(),
+    )
+    async def noop(**kwargs) -> dict:
+        return {"noop": True, "received": kwargs}
+
+    @thunk_operation(
+        name="test.recover",
+        description="Recovery handler for catch testing.",
+        required_capabilities=frozenset(),
+    )
+    async def recover(_error: str = "", _error_type: str = "", **kwargs) -> dict:
+        return {"recovered": True, "from_error": _error}
+
+    @thunk_operation(
+        name="test.validator",
+        description="Validates output for validate testing.",
+        required_capabilities=frozenset(),
+    )
+    async def validator(_output: dict | None = None, require_key: str = "") -> dict:
+        if _output and require_key and require_key not in _output:
+            return {"valid": False, "reason": f"Missing key: {require_key}"}
+        return {"valid": True}
+
     yield
 
     # Cleanup
@@ -84,6 +114,9 @@ def _register_test_ops():
         "test.slow",
         "test.accumulate",
         "test.check_flag",
+        "test.noop",
+        "test.recover",
+        "test.validator",
     ]:
         registry.unregister(op)
 
@@ -369,6 +402,238 @@ class TestThunkReduce:
         assert result["result"] == 42
 
 
+class TestThunkCatch:
+    """Tests for thunk.catch combinator."""
+
+    @pytest.mark.asyncio
+    async def test_catch_success_no_error(self, _register_test_ops):
+        """Should pass through success without catching."""
+        result = await thunk_catch(
+            operation="test.echo",
+            inputs={"value": "hello"},
+            default={"fallback": True},
+        )
+        assert result["caught"] is False
+        assert result["output"]["echoed"] == "hello"
+
+    @pytest.mark.asyncio
+    async def test_catch_error_with_default(self, _register_test_ops):
+        """Should catch error and return default."""
+        result = await thunk_catch(
+            operation="test.fail",
+            inputs={"message": "oops"},
+            default={"fallback": True},
+        )
+        assert result["caught"] is True
+        assert result["output"]["fallback"] is True
+        assert "original_error" in result
+
+    @pytest.mark.asyncio
+    async def test_catch_error_with_handler(self, _register_test_ops):
+        """Should catch error and run recovery handler."""
+        result = await thunk_catch(
+            operation="test.fail",
+            inputs={"message": "oops"},
+            error_handler={"operation": "test.recover", "inputs": {}},
+        )
+        assert result["caught"] is True
+        assert result["recovered"] is True
+        assert result["output"]["recovered"] is True
+
+    @pytest.mark.asyncio
+    async def test_catch_selective_error_types(self, _register_test_ops):
+        """Should only catch specified error types."""
+        result = await thunk_catch(
+            operation="test.fail",
+            inputs={"message": "oops"},
+            catch_types=["NetworkError"],  # Won't match ValueError
+            default={"fallback": True},
+        )
+        # Should propagate since ValueError not in catch_types
+        assert result["caught"] is False
+        assert result["propagated"] is True
+
+
+class TestThunkEnsure:
+    """Tests for thunk.ensure combinator."""
+
+    @pytest.mark.asyncio
+    async def test_ensure_runs_finally_on_success(self, _register_test_ops):
+        """Should run finally thunk even on success."""
+        result = await thunk_ensure(
+            operation="test.echo",
+            inputs={"value": "main"},
+            finally_thunk={"operation": "test.noop", "inputs": {}},
+        )
+        assert result["success"] is True
+        assert result["output"]["echoed"] == "main"
+        assert result["finally_executed"] is True
+        assert result["finally_success"] is True
+
+    @pytest.mark.asyncio
+    async def test_ensure_runs_finally_on_failure(self, _register_test_ops):
+        """Should run finally thunk even on failure."""
+        result = await thunk_ensure(
+            operation="test.fail",
+            inputs={"message": "boom"},
+            finally_thunk={"operation": "test.noop", "inputs": {}},
+        )
+        assert result["success"] is False
+        assert result["error"] is not None
+        assert result["finally_executed"] is True
+        assert result["finally_success"] is True
+
+    @pytest.mark.asyncio
+    async def test_ensure_passes_result_to_finally(self, _register_test_ops):
+        """Should pass main result to finally thunk when requested."""
+        result = await thunk_ensure(
+            operation="test.echo",
+            inputs={"value": "main"},
+            finally_thunk={"operation": "test.noop", "inputs": {}},
+            pass_result_to_finally=True,
+        )
+        assert result["success"] is True
+        assert result["finally_executed"] is True
+
+
+class TestThunkTap:
+    """Tests for thunk.tap combinator."""
+
+    @pytest.mark.asyncio
+    async def test_tap_runs_side_effect(self, _register_test_ops):
+        """Should run tap without affecting main result."""
+        result = await thunk_tap(
+            operation="test.echo",
+            inputs={"value": "main"},
+            tap_thunk={"operation": "test.noop", "inputs": {}},
+        )
+        assert result["success"] is True
+        assert result["output"]["echoed"] == "main"
+        assert result["tap_executed"] is True
+        assert result["tap_success"] is True
+
+    @pytest.mark.asyncio
+    async def test_tap_not_run_on_error_by_default(self, _register_test_ops):
+        """Should not run tap on error by default."""
+        result = await thunk_tap(
+            operation="test.fail",
+            inputs={"message": "boom"},
+            tap_thunk={"operation": "test.noop", "inputs": {}},
+        )
+        assert result["success"] is False
+        assert result["tap_executed"] is False
+
+    @pytest.mark.asyncio
+    async def test_tap_run_on_error_when_configured(self, _register_test_ops):
+        """Should run tap on error when tap_on_error=True."""
+        result = await thunk_tap(
+            operation="test.fail",
+            inputs={"message": "boom"},
+            tap_thunk={"operation": "test.noop", "inputs": {}},
+            tap_on_error=True,
+        )
+        assert result["success"] is False
+        assert result["tap_executed"] is True
+
+    @pytest.mark.asyncio
+    async def test_tap_failure_ignored_by_default(self, _register_test_ops):
+        """Should ignore tap failures by default."""
+        result = await thunk_tap(
+            operation="test.echo",
+            inputs={"value": "main"},
+            tap_thunk={"operation": "test.fail", "inputs": {"message": "tap failed"}},
+        )
+        assert result["success"] is True
+        assert result["output"]["echoed"] == "main"
+        assert result["tap_executed"] is True
+        assert result["tap_success"] is False
+        assert "tap_error" not in result  # Ignored
+
+
+class TestThunkValidate:
+    """Tests for thunk.validate combinator."""
+
+    @pytest.mark.asyncio
+    async def test_validate_passes_valid_output(self, _register_test_ops):
+        """Should pass through valid output."""
+        result = await thunk_validate(
+            operation="test.echo",
+            inputs={"value": "hello"},
+            required_keys=["echoed"],
+        )
+        assert result["success"] is True
+        assert result["valid"] is True
+        assert result["output"]["echoed"] == "hello"
+
+    @pytest.mark.asyncio
+    async def test_validate_fails_missing_keys(self, _register_test_ops):
+        """Should fail when required keys are missing."""
+        result = await thunk_validate(
+            operation="test.echo",
+            inputs={"value": "hello"},
+            required_keys=["missing_key"],
+            on_invalid="error",
+        )
+        assert result["success"] is False
+        assert result["valid"] is False
+        assert "validation_errors" in result
+
+    @pytest.mark.asyncio
+    async def test_validate_warns_instead_of_error(self, _register_test_ops):
+        """Should warn instead of fail when on_invalid='warn'."""
+        result = await thunk_validate(
+            operation="test.echo",
+            inputs={"value": "hello"},
+            required_keys=["missing_key"],
+            on_invalid="warn",
+        )
+        assert result["success"] is True  # Still succeeds
+        assert result["valid"] is False
+        assert "validation_warnings" in result
+
+    @pytest.mark.asyncio
+    async def test_validate_with_schema(self, _register_test_ops):
+        """Should validate against JSON schema."""
+        result = await thunk_validate(
+            operation="test.echo",
+            inputs={"value": "hello"},
+            schema={
+                "type": "object",
+                "required": ["echoed"],
+                "properties": {"echoed": {"type": "string"}},
+            },
+        )
+        assert result["success"] is True
+        assert result["valid"] is True
+
+    @pytest.mark.asyncio
+    async def test_validate_schema_type_mismatch(self, _register_test_ops):
+        """Should fail when schema type doesn't match."""
+        result = await thunk_validate(
+            operation="test.add",
+            inputs={"a": 1, "b": 2},
+            schema={
+                "type": "object",
+                "properties": {"result": {"type": "string"}},  # Actually int
+            },
+        )
+        assert result["valid"] is False
+
+    @pytest.mark.asyncio
+    async def test_validate_with_custom_validator(self, _register_test_ops):
+        """Should run custom validator thunk."""
+        result = await thunk_validate(
+            operation="test.echo",
+            inputs={"value": "hello"},
+            validator_thunk={
+                "operation": "test.validator",
+                "inputs": {"require_key": "echoed"},
+            },
+        )
+        assert result["success"] is True
+        assert result["valid"] is True
+
+
 class TestCombinatorRegistration:
     """Test that combinators are properly registered."""
 
@@ -391,6 +656,10 @@ class TestCombinatorRegistration:
             "thunk.conditional",
             "thunk.map",
             "thunk.reduce",
+            "thunk.catch",
+            "thunk.ensure",
+            "thunk.tap",
+            "thunk.validate",
         }
         assert expected.issubset(op_names)
 

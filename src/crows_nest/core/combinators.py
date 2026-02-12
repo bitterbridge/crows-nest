@@ -757,3 +757,420 @@ async def thunk_reduce(
         "result": accumulator,
         "steps": steps,
     }
+
+
+@thunk_operation(
+    name="thunk.catch",
+    description="Execute a thunk and catch errors, optionally recovering with a handler.",
+    required_capabilities=frozenset(),
+)
+async def thunk_catch(
+    operation: str,
+    inputs: dict[str, Any],
+    default: Any = None,
+    error_handler: dict[str, Any] | None = None,
+    catch_types: list[str] | None = None,
+) -> dict[str, Any]:
+    """Catch errors from a thunk.
+
+    Args:
+        operation: The operation to execute.
+        inputs: Inputs to the operation.
+        default: Default value to return on error (if no error_handler).
+        error_handler: Optional thunk to call on error (receives error info as input).
+        catch_types: List of error type substrings to catch (None = catch all).
+
+    Returns:
+        Dict with result or caught error info.
+
+    Example:
+        thunk.catch(
+            operation="api.call",
+            inputs={"url": "https://example.com"},
+            default={"cached": True},
+            catch_types=["ConnectionError", "Timeout"]
+        )
+    """
+    from crows_nest.core.runtime import ThunkRuntime
+
+    runtime = ThunkRuntime(get_global_registry())
+    thunk = Thunk.create(operation=operation, inputs=inputs)
+    result = await runtime.force(thunk)
+
+    if result.is_success:
+        return {
+            "caught": False,
+            "output": result.value,
+        }
+
+    # Error occurred
+    error_type = result.error.error_type if result.error else "Unknown"
+    error_msg = result.error.message if result.error else "Unknown error"
+
+    # Check if we should catch this error type
+    if catch_types and not any(t in error_type for t in catch_types):
+        # Don't catch - propagate as failure
+        return {
+            "caught": False,
+            "output": None,
+            "error": error_msg,
+            "error_type": error_type,
+            "propagated": True,
+        }
+
+    # Caught the error
+    if error_handler:
+        # Run error handler with error info
+        handler_op = error_handler.get("operation")
+        handler_inputs = error_handler.get("inputs", {})
+        if handler_op:
+            # Add error info to handler inputs
+            handler_inputs = {
+                **handler_inputs,
+                "_error": error_msg,
+                "_error_type": error_type,
+            }
+            handler_thunk = Thunk.create(operation=handler_op, inputs=handler_inputs)
+            handler_result = await runtime.force(handler_thunk)
+            if handler_result.is_success:
+                return {
+                    "caught": True,
+                    "recovered": True,
+                    "output": handler_result.value,
+                    "original_error": error_msg,
+                }
+            # Handler also failed
+            return {
+                "caught": True,
+                "recovered": False,
+                "output": default,
+                "original_error": error_msg,
+                "handler_error": (
+                    handler_result.error.message if handler_result.error else "Unknown"
+                ),
+            }
+
+    # No handler - return default
+    return {
+        "caught": True,
+        "recovered": False,
+        "output": default,
+        "original_error": error_msg,
+        "error_type": error_type,
+    }
+
+
+@thunk_operation(
+    name="thunk.ensure",
+    description="Execute a thunk with guaranteed cleanup, regardless of success or failure.",
+    required_capabilities=frozenset(),
+)
+async def thunk_ensure(
+    operation: str,
+    inputs: dict[str, Any],
+    finally_thunk: dict[str, Any],
+    pass_result_to_finally: bool = False,
+) -> dict[str, Any]:
+    """Execute with guaranteed cleanup.
+
+    Args:
+        operation: The main operation to execute.
+        inputs: Inputs to the main operation.
+        finally_thunk: Thunk to execute regardless of main result.
+        pass_result_to_finally: If True, pass main result to finally thunk.
+
+    Returns:
+        Dict with main result and finally execution status.
+
+    Example:
+        thunk.ensure(
+            operation="db.query",
+            inputs={"sql": "SELECT *"},
+            finally_thunk={"operation": "db.close", "inputs": {}}
+        )
+    """
+    from crows_nest.core.runtime import ThunkRuntime
+
+    runtime = ThunkRuntime(get_global_registry())
+
+    # Execute main operation
+    thunk = Thunk.create(operation=operation, inputs=inputs)
+    result = await runtime.force(thunk)
+
+    main_success = result.is_success
+    main_output = result.value if main_success else None
+    main_error = result.error.message if result.error else None
+
+    # Always execute finally thunk
+    finally_op = finally_thunk.get("operation")
+    finally_inputs = finally_thunk.get("inputs", {})
+
+    if pass_result_to_finally:
+        finally_inputs = {
+            **finally_inputs,
+            "_main_success": main_success,
+            "_main_output": main_output,
+            "_main_error": main_error,
+        }
+
+    finally_success = False
+    finally_error = None
+
+    if finally_op:
+        finally_thunk_obj = Thunk.create(operation=finally_op, inputs=finally_inputs)
+        finally_result = await runtime.force(finally_thunk_obj)
+        finally_success = finally_result.is_success
+        if not finally_success:
+            finally_error = finally_result.error.message if finally_result.error else "Unknown"
+
+    return {
+        "success": main_success,
+        "output": main_output,
+        "error": main_error,
+        "finally_executed": True,
+        "finally_success": finally_success,
+        "finally_error": finally_error,
+    }
+
+
+@thunk_operation(
+    name="thunk.tap",
+    description="Execute a thunk and run a side-effect without changing the result.",
+    required_capabilities=frozenset(),
+)
+async def thunk_tap(
+    operation: str,
+    inputs: dict[str, Any],
+    tap_thunk: dict[str, Any],
+    tap_on_error: bool = False,
+    ignore_tap_errors: bool = True,
+) -> dict[str, Any]:
+    """Execute with side-effect tap.
+
+    Useful for logging, monitoring, or triggering events without
+    affecting the main result.
+
+    Args:
+        operation: The main operation to execute.
+        inputs: Inputs to the main operation.
+        tap_thunk: Side-effect thunk to execute (receives main output).
+        tap_on_error: Whether to run tap on error (default False).
+        ignore_tap_errors: Whether to ignore tap failures (default True).
+
+    Returns:
+        Dict with main result (tap doesn't affect output).
+
+    Example:
+        thunk.tap(
+            operation="user.create",
+            inputs={"email": "test@example.com"},
+            tap_thunk={"operation": "log.event", "inputs": {"event": "user_created"}}
+        )
+    """
+    from crows_nest.core.runtime import ThunkRuntime
+
+    runtime = ThunkRuntime(get_global_registry())
+
+    # Execute main operation
+    thunk = Thunk.create(operation=operation, inputs=inputs)
+    result = await runtime.force(thunk)
+
+    main_success = result.is_success
+    main_output = result.value if main_success else None
+    main_error = result.error.message if result.error else None
+
+    # Decide whether to run tap
+    should_tap = main_success or tap_on_error
+
+    tap_executed = False
+    tap_success = False
+    tap_error = None
+
+    if should_tap:
+        tap_op = tap_thunk.get("operation")
+        tap_inputs = tap_thunk.get("inputs", {})
+
+        if tap_op:
+            # Pass main result info to tap
+            tap_inputs = {
+                **tap_inputs,
+                "_tapped_success": main_success,
+                "_tapped_output": main_output,
+                "_tapped_error": main_error,
+            }
+            tap_thunk_obj = Thunk.create(operation=tap_op, inputs=tap_inputs)
+            tap_result = await runtime.force(tap_thunk_obj)
+            tap_executed = True
+            tap_success = tap_result.is_success
+            if not tap_success:
+                tap_error = tap_result.error.message if tap_result.error else "Unknown"
+
+    # Build response - tap doesn't change main result
+    response: dict[str, Any] = {
+        "success": main_success,
+        "output": main_output,
+        "tap_executed": tap_executed,
+        "tap_success": tap_success,
+    }
+
+    if main_error:
+        response["error"] = main_error
+    if tap_error and not ignore_tap_errors:
+        response["tap_error"] = tap_error
+
+    return response
+
+
+@thunk_operation(
+    name="thunk.validate",
+    description="Execute a thunk and validate its output against a schema or predicate.",
+    required_capabilities=frozenset(),
+)
+async def thunk_validate(
+    operation: str,
+    inputs: dict[str, Any],
+    schema: dict[str, Any] | None = None,
+    validator_thunk: dict[str, Any] | None = None,
+    required_keys: list[str] | None = None,
+    on_invalid: str = "error",
+) -> dict[str, Any]:
+    """Execute and validate output.
+
+    Args:
+        operation: The operation to execute.
+        inputs: Inputs to the operation.
+        schema: JSON Schema to validate against (simplified check).
+        validator_thunk: Custom validator thunk (receives output, returns success).
+        required_keys: List of keys that must exist in output dict.
+        on_invalid: What to do on invalid output: "error" or "warn".
+
+    Returns:
+        Dict with result and validation status.
+
+    Example:
+        thunk.validate(
+            operation="api.fetch",
+            inputs={"url": "https://api.example.com/data"},
+            required_keys=["id", "name", "status"],
+            on_invalid="error"
+        )
+    """
+    from crows_nest.core.runtime import ThunkRuntime
+
+    runtime = ThunkRuntime(get_global_registry())
+
+    # Execute main operation
+    thunk = Thunk.create(operation=operation, inputs=inputs)
+    result = await runtime.force(thunk)
+
+    if result.is_failure:
+        return {
+            "success": False,
+            "output": None,
+            "error": result.error.message if result.error else "Unknown",
+            "validated": False,
+        }
+
+    output = result.value
+    validation_errors: list[str] = []
+
+    # Check required keys
+    if required_keys and isinstance(output, dict):
+        missing = [k for k in required_keys if k not in output]
+        if missing:
+            validation_errors.append(f"Missing required keys: {missing}")
+
+    # Check schema (simplified type checking)
+    if schema and isinstance(output, dict):
+        schema_type = schema.get("type")
+        if schema_type == "object":
+            if not isinstance(output, dict):
+                validation_errors.append(f"Expected object, got {type(output).__name__}")
+            else:
+                # Check required properties
+                required_props = schema.get("required", [])
+                missing_props = [p for p in required_props if p not in output]
+                if missing_props:
+                    validation_errors.append(f"Missing required properties: {missing_props}")
+
+                # Check property types (simplified)
+                properties = schema.get("properties", {})
+                for prop, prop_schema in properties.items():
+                    if prop in output:
+                        expected_type = prop_schema.get("type")
+                        actual_value = output[prop]
+                        if not _check_type(actual_value, expected_type):
+                            validation_errors.append(
+                                f"Property '{prop}' has wrong type: "
+                                f"expected {expected_type}, got {type(actual_value).__name__}"
+                            )
+        elif schema_type and not _check_type(output, schema_type):
+            validation_errors.append(f"Expected {schema_type}, got {type(output).__name__}")
+
+    # Run custom validator
+    if validator_thunk and not validation_errors:
+        validator_op = validator_thunk.get("operation")
+        validator_inputs = validator_thunk.get("inputs", {})
+        if validator_op:
+            validator_inputs = {**validator_inputs, "_output": output}
+            validator_thunk_obj = Thunk.create(operation=validator_op, inputs=validator_inputs)
+            validator_result = await runtime.force(validator_thunk_obj)
+            if validator_result.is_failure:
+                err = validator_result.error.message if validator_result.error else "Unknown"
+                validation_errors.append(f"Validator failed: {err}")
+            elif validator_result.value:
+                # Check if validator returned success indicator
+                if isinstance(validator_result.value, dict):
+                    if not validator_result.value.get("valid", True):
+                        validation_errors.append(
+                            validator_result.value.get("reason", "Validation failed")
+                        )
+                elif validator_result.value is False:
+                    validation_errors.append("Validator returned False")
+
+    is_valid = len(validation_errors) == 0
+
+    if is_valid:
+        return {
+            "success": True,
+            "output": output,
+            "validated": True,
+            "valid": True,
+        }
+
+    if on_invalid == "error":
+        return {
+            "success": False,
+            "output": output,
+            "validated": True,
+            "valid": False,
+            "validation_errors": validation_errors,
+        }
+
+    # on_invalid == "warn" - return output but flag as invalid
+    return {
+        "success": True,
+        "output": output,
+        "validated": True,
+        "valid": False,
+        "validation_warnings": validation_errors,
+    }
+
+
+def _check_type(value: Any, expected_type: str | None) -> bool:
+    """Check if value matches expected JSON Schema type."""
+    if expected_type is None:
+        return True
+    type_map: dict[str, type | tuple[type, ...]] = {
+        "string": str,
+        "integer": int,
+        "number": (int, float),
+        "boolean": bool,
+        "array": list,
+        "object": dict,
+        "null": type(None),
+    }
+    expected = type_map.get(expected_type)
+    if expected is None:
+        return True  # Unknown type, assume valid
+    return isinstance(value, expected)
