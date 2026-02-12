@@ -137,6 +137,9 @@ ignore = [
 "src/crows_nest/observability/tracing.py" = [
     "PLC0415",  # lazy import for optional OTLP exporter
 ]
+"src/crows_nest/core/introspection.py" = [
+    "PLC0415",  # lazy import of plugin loader to avoid circular dependencies
+]
 "src/crows_nest/shell/verification.py" = [
     "PLR0912",  # many branches needed for type validation
     "SIM114",   # combined branches reduce readability for validation

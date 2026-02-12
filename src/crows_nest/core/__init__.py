@@ -1,5 +1,7 @@
 """Core thunk runtime and primitives."""
 
+# Import introspection to register system.* operations
+from crows_nest.core import introspection as _introspection  # noqa: F401
 from crows_nest.core.config import (
     APISettings,
     CapabilitiesSettings,
