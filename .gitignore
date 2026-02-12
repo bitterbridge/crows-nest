@@ -114,6 +114,8 @@ uv.lock
 
 # SQLite databases (except test fixtures)
 *.db
+*.db-shm
+*.db-wal
 *.sqlite
 *.sqlite3
 
