@@ -1,5 +1,21 @@
 """Plugin discovery and loading."""
 
+from crows_nest.plugins.artifacts import (
+    ApprovalDecision,
+    ApprovalScope,
+    LoadResult,
+    LoadScope,
+    OperationSpec,
+    ParameterSpec,
+    PluginArtifact,
+    ResourceUsage,
+    RiskLevel,
+    Severity,
+    TestResult,
+    VerificationReport,
+    Violation,
+    ViolationType,
+)
 from crows_nest.plugins.loader import (
     DEFAULT_PLUGIN_DIR,
     ENTRY_POINT_GROUP,
@@ -14,18 +30,40 @@ from crows_nest.plugins.loader import (
     load_plugins,
     reset_plugin_loader,
 )
+from crows_nest.plugins.storage import (
+    ArtifactStorage,
+    get_artifact_storage,
+    reset_artifact_storage,
+)
 
 __all__ = [
     "DEFAULT_PLUGIN_DIR",
     "ENTRY_POINT_GROUP",
+    "ApprovalDecision",
+    "ApprovalScope",
+    "ArtifactStorage",
+    "LoadResult",
+    "LoadScope",
+    "OperationSpec",
+    "ParameterSpec",
+    "PluginArtifact",
     "PluginError",
     "PluginInfo",
     "PluginLoadError",
     "PluginLoader",
     "PluginNotFoundError",
     "PluginSource",
+    "ResourceUsage",
+    "RiskLevel",
+    "Severity",
+    "TestResult",
+    "VerificationReport",
+    "Violation",
+    "ViolationType",
+    "get_artifact_storage",
     "get_loaded_plugins",
     "get_plugin_loader",
     "load_plugins",
+    "reset_artifact_storage",
     "reset_plugin_loader",
 ]
