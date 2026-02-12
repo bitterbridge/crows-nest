@@ -10,17 +10,22 @@ from crows_nest.core.combinators import (
     thunk_ensure,
     thunk_fallback,
     thunk_fanout,
+    thunk_filter,
     thunk_map,
     thunk_merge,
     thunk_parallel,
     thunk_partition,
+    thunk_pipe,
     thunk_race,
     thunk_reduce,
+    thunk_repeat,
     thunk_retry,
     thunk_sequence,
     thunk_tap,
     thunk_timeout,
+    thunk_until,
     thunk_validate,
+    thunk_while,
     thunk_zip,
 )
 from crows_nest.core.registry import get_global_registry, thunk_operation
@@ -156,6 +161,61 @@ def _register_test_ops():
     async def config_b(**kwargs) -> dict:
         return {"setting2": "b", "shared": "from_b"}
 
+    @thunk_operation(
+        name="test.double",
+        description="Double a number.",
+        required_capabilities=frozenset(),
+    )
+    async def double(value: int | None = None, result: int | None = None, **kwargs) -> dict:
+        # Accept either 'value' or 'result' as input for pipe compatibility
+        num = value if value is not None else (result if result is not None else 0)
+        return {"result": num * 2}
+
+    @thunk_operation(
+        name="test.add_one",
+        description="Add one to a number.",
+        required_capabilities=frozenset(),
+    )
+    async def add_one(result: int = 0, **kwargs) -> dict:
+        return {"result": result + 1}
+
+    # Stateful counter for loop testing
+    _counter = {"value": 0}
+
+    @thunk_operation(
+        name="test.counter_increment",
+        description="Increment counter and return value.",
+        required_capabilities=frozenset(),
+    )
+    async def counter_increment(**kwargs) -> dict:
+        _counter["value"] += 1
+        return {"count": _counter["value"]}
+
+    @thunk_operation(
+        name="test.counter_check",
+        description="Check if counter reached target.",
+        required_capabilities=frozenset(),
+    )
+    async def counter_check(target: int = 5, count: int = 0, **kwargs) -> dict:
+        return {"result": count >= target, "done": count >= target}
+
+    @thunk_operation(
+        name="test.counter_reset",
+        description="Reset counter to zero.",
+        required_capabilities=frozenset(),
+    )
+    async def counter_reset(**kwargs) -> dict:
+        _counter["value"] = 0
+        return {"reset": True}
+
+    @thunk_operation(
+        name="test.should_continue",
+        description="Return whether to continue looping.",
+        required_capabilities=frozenset(),
+    )
+    async def should_continue(count: int = 0, limit: int = 3, **kwargs) -> dict:
+        return {"result": count < limit, "continue": count < limit}
+
     yield
 
     # Cleanup
@@ -175,6 +235,12 @@ def _register_test_ops():
         "test.is_even",
         "test.config_a",
         "test.config_b",
+        "test.double",
+        "test.add_one",
+        "test.counter_increment",
+        "test.counter_check",
+        "test.counter_reset",
+        "test.should_continue",
     ]:
         registry.unregister(op)
 
@@ -918,6 +984,289 @@ class TestThunkPartition:
         assert "operation" in result["error"].lower()
 
 
+class TestThunkPipe:
+    """Tests for thunk.pipe combinator."""
+
+    @pytest.mark.asyncio
+    async def test_pipe_chains_output_to_input(self, _register_test_ops):
+        """Should pass output of each stage to next stage."""
+        result = await thunk_pipe(
+            thunks=[
+                {"operation": "test.double", "inputs": {}},
+                {"operation": "test.add_one", "inputs": {}},
+            ],
+            initial_input={"value": 5},
+        )
+        assert result["success"] is True
+        # 5 * 2 = 10, then 10 + 1 = 11
+        assert result["output"] == 11
+        assert result["stages"] == 2
+
+    @pytest.mark.asyncio
+    async def test_pipe_with_multiple_stages(self, _register_test_ops):
+        """Should handle multiple pipeline stages."""
+        result = await thunk_pipe(
+            thunks=[
+                {"operation": "test.double"},
+                {"operation": "test.add_one"},
+                {"operation": "test.double"},
+            ],
+            initial_input={"value": 2},
+        )
+        assert result["success"] is True
+        # 2 * 2 = 4, 4 + 1 = 5, 5 * 2 = 10
+        assert result["output"] == 10
+
+    @pytest.mark.asyncio
+    async def test_pipe_stops_on_failure(self, _register_test_ops):
+        """Should stop pipeline on failure."""
+        result = await thunk_pipe(
+            thunks=[
+                {"operation": "test.echo", "inputs": {"value": "ok"}},
+                {"operation": "test.fail", "inputs": {"message": "boom"}},
+                {"operation": "test.echo", "inputs": {"value": "never"}},
+            ],
+            initial_input={},
+        )
+        assert result["success"] is False
+        assert result["failed_at"] == 1
+        assert len(result["history"]) == 2
+
+    @pytest.mark.asyncio
+    async def test_pipe_records_history(self, _register_test_ops):
+        """Should record history of all stages."""
+        result = await thunk_pipe(
+            thunks=[
+                {"operation": "test.double"},
+                {"operation": "test.add_one"},
+            ],
+            initial_input={"value": 3},
+        )
+        assert result["success"] is True
+        assert len(result["history"]) == 2
+        assert result["history"][0]["output"]["result"] == 6
+        assert result["history"][1]["output"]["result"] == 7
+
+
+class TestThunkFilter:
+    """Tests for thunk.filter combinator."""
+
+    @pytest.mark.asyncio
+    async def test_filter_keeps_passing_items(self, _register_test_ops):
+        """Should keep only items that pass predicate."""
+        result = await thunk_filter(
+            items=[1, 2, 3, 4, 5, 6],
+            predicate={"operation": "test.is_even"},
+            item_key="item",
+        )
+        assert result["success"] is True
+        assert result["items"] == [2, 4, 6]
+        assert result["count"] == 3
+        assert result["filtered_out"] == 3
+
+    @pytest.mark.asyncio
+    async def test_filter_empty_result(self, _register_test_ops):
+        """Should handle no items passing."""
+        result = await thunk_filter(
+            items=[1, 3, 5, 7],
+            predicate={"operation": "test.is_even"},
+            item_key="item",
+        )
+        assert result["success"] is True
+        assert result["items"] == []
+        assert result["count"] == 0
+
+    @pytest.mark.asyncio
+    async def test_filter_all_pass(self, _register_test_ops):
+        """Should handle all items passing."""
+        result = await thunk_filter(
+            items=[2, 4, 6],
+            predicate={"operation": "test.is_even"},
+            item_key="item",
+        )
+        assert result["success"] is True
+        assert result["items"] == [2, 4, 6]
+        assert result["filtered_out"] == 0
+
+
+class TestThunkRepeat:
+    """Tests for thunk.repeat combinator."""
+
+    @pytest.mark.asyncio
+    async def test_repeat_runs_n_times(self, _register_test_ops):
+        """Should run operation specified number of times."""
+        result = await thunk_repeat(
+            operation="test.echo",
+            inputs={"value": "hello"},
+            times=3,
+        )
+        assert result["success"] is True
+        assert result["total"] == 3
+        assert result["completed"] == 3
+        assert len(result["results"]) == 3
+
+    @pytest.mark.asyncio
+    async def test_repeat_parallel(self, _register_test_ops):
+        """Should run iterations in parallel."""
+        result = await thunk_repeat(
+            operation="test.echo",
+            inputs={"value": "parallel"},
+            times=5,
+            parallel=True,
+        )
+        assert result["success"] is True
+        assert result["completed"] == 5
+
+    @pytest.mark.asyncio
+    async def test_repeat_with_index(self, _register_test_ops):
+        """Should include iteration index when requested."""
+        result = await thunk_repeat(
+            operation="test.noop",
+            inputs={},
+            times=3,
+            include_index=True,
+            index_key="iteration",
+        )
+        assert result["success"] is True
+        # Each call should have received the iteration index
+        for i, r in enumerate(result["results"]):
+            assert r["output"]["received"]["iteration"] == i
+
+    @pytest.mark.asyncio
+    async def test_repeat_stops_on_failure(self, _register_test_ops):
+        """Should stop on failure when configured."""
+        result = await thunk_repeat(
+            operation="test.fail",
+            inputs={"message": "always fails"},
+            times=5,
+            stop_on_failure=True,
+        )
+        assert result["success"] is False
+        assert result["completed"] == 1  # Stopped after first failure
+
+
+class TestThunkWhile:
+    """Tests for thunk.while combinator."""
+
+    @pytest.mark.asyncio
+    async def test_while_loops_until_condition_false(self, _register_test_ops):
+        """Should loop while condition is true."""
+        # Reset counter first
+        await thunk_repeat(
+            operation="test.counter_reset",
+            inputs={},
+            times=1,
+        )
+
+        result = await thunk_while(
+            condition={
+                "operation": "test.should_continue",
+                "inputs": {"limit": 3},
+            },
+            body={"operation": "test.counter_increment"},
+            max_iterations=10,
+            pass_output_to_condition=True,
+        )
+        assert result["success"] is True
+        assert result["iterations"] == 3
+        assert result["max_reached"] is False
+
+    @pytest.mark.asyncio
+    async def test_while_respects_max_iterations(self, _register_test_ops):
+        """Should stop at max_iterations."""
+        result = await thunk_while(
+            condition={
+                "operation": "test.check_flag",
+                "inputs": {"flag": True},  # Always true
+            },
+            body={"operation": "test.noop"},
+            max_iterations=5,
+        )
+        assert result["success"] is True
+        assert result["iterations"] == 5
+        assert result["max_reached"] is True
+
+    @pytest.mark.asyncio
+    async def test_while_zero_iterations(self, _register_test_ops):
+        """Should handle condition false from start."""
+        result = await thunk_while(
+            condition={
+                "operation": "test.check_flag",
+                "inputs": {"flag": False},  # Immediately false
+            },
+            body={"operation": "test.noop"},
+        )
+        assert result["success"] is True
+        assert result["iterations"] == 0
+
+
+class TestThunkUntil:
+    """Tests for thunk.until combinator."""
+
+    @pytest.mark.asyncio
+    async def test_until_loops_until_condition_true(self, _register_test_ops):
+        """Should loop until condition becomes true."""
+        # Reset counter
+        await thunk_repeat(operation="test.counter_reset", inputs={}, times=1)
+
+        result = await thunk_until(
+            condition={
+                "operation": "test.counter_check",
+                "inputs": {"target": 3},
+            },
+            body={"operation": "test.counter_increment"},
+            max_iterations=10,
+            pass_output_to_condition=True,
+        )
+        assert result["success"] is True
+        assert result["condition_met"] is True
+        assert result["iterations"] == 3
+
+    @pytest.mark.asyncio
+    async def test_until_runs_at_least_once(self, _register_test_ops):
+        """Do-until should run body at least once."""
+        result = await thunk_until(
+            condition={
+                "operation": "test.check_flag",
+                "inputs": {"flag": True},  # Immediately true (done)
+            },
+            body={"operation": "test.echo", "inputs": {"value": "ran"}},
+            check_before=False,  # do-until (default)
+        )
+        assert result["success"] is True
+        assert result["iterations"] == 1  # Ran once before checking
+
+    @pytest.mark.asyncio
+    async def test_until_check_before(self, _register_test_ops):
+        """While-not should check before running body."""
+        result = await thunk_until(
+            condition={
+                "operation": "test.check_flag",
+                "inputs": {"flag": True},  # Already done
+            },
+            body={"operation": "test.echo", "inputs": {"value": "never"}},
+            check_before=True,  # while-not style
+        )
+        assert result["success"] is True
+        assert result["iterations"] == 0  # Never ran body
+
+    @pytest.mark.asyncio
+    async def test_until_max_iterations(self, _register_test_ops):
+        """Should fail when max iterations reached without condition met."""
+        result = await thunk_until(
+            condition={
+                "operation": "test.check_flag",
+                "inputs": {"flag": False},  # Never done
+            },
+            body={"operation": "test.noop"},
+            max_iterations=3,
+            pass_output_to_condition=False,  # Don't pass body output to condition
+        )
+        assert result["success"] is False
+        assert result["condition_met"] is False
+        assert result["max_reached"] is True
+
+
 class TestCombinatorRegistration:
     """Test that combinators are properly registered."""
 
@@ -948,6 +1297,11 @@ class TestCombinatorRegistration:
             "thunk.fanout",
             "thunk.merge",
             "thunk.partition",
+            "thunk.pipe",
+            "thunk.filter",
+            "thunk.repeat",
+            "thunk.while",
+            "thunk.until",
         }
         assert expected.issubset(op_names)
 

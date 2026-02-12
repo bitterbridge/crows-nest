@@ -1550,3 +1550,501 @@ async def thunk_partition(
         "failed_count": len(failed),
         "errors": errors if errors else None,
     }
+
+
+@thunk_operation(
+    name="thunk.pipe",
+    description="Chain thunks where each output becomes the next input.",
+    required_capabilities=frozenset(),
+)
+async def thunk_pipe(
+    thunks: list[dict[str, Any]],
+    initial_input: dict[str, Any] | None = None,
+    output_key: str = "result",
+    input_key: str = "input",
+) -> dict[str, Any]:
+    """Pipe data through a chain of thunks.
+
+    Unlike sequence, pipe automatically passes each thunk's output as input
+    to the next thunk in the chain.
+
+    Args:
+        thunks: List of thunk specifications to chain.
+        initial_input: Initial data to pass to first thunk.
+        output_key: Key to extract from each output (or None for whole output).
+        input_key: Key name to use when passing to next thunk.
+
+    Returns:
+        Dict with final output and pipeline history.
+
+    Example:
+        thunk.pipe(
+            thunks=[
+                {"operation": "text.tokenize"},
+                {"operation": "text.filter_stopwords"},
+                {"operation": "text.stem"},
+            ],
+            initial_input={"text": "Hello world"},
+            input_key="tokens"
+        )
+    """
+    from crows_nest.core.runtime import ThunkRuntime
+
+    runtime = ThunkRuntime(get_global_registry())
+
+    current_data: Any = initial_input or {}
+    history: list[dict[str, Any]] = []
+
+    for i, thunk_spec in enumerate(thunks):
+        operation = thunk_spec.get("operation")
+        base_inputs = thunk_spec.get("inputs", {})
+
+        if not operation:
+            return {
+                "success": False,
+                "error": f"Missing 'operation' in thunk spec at index {i}",
+                "failed_at": i,
+                "history": history,
+            }
+
+        # Build inputs: merge base inputs with piped data
+        if isinstance(current_data, dict):
+            inputs = {**current_data, **base_inputs}
+        else:
+            inputs = {**base_inputs, input_key: current_data}
+
+        thunk = Thunk.create(operation=operation, inputs=inputs)
+        result = await runtime.force(thunk)
+
+        if result.is_failure:
+            error_msg = result.error.message if result.error else "Unknown error"
+            history.append(
+                {
+                    "index": i,
+                    "operation": operation,
+                    "status": "failed",
+                    "error": error_msg,
+                }
+            )
+            return {
+                "success": False,
+                "error": error_msg,
+                "failed_at": i,
+                "history": history,
+            }
+
+        output = result.value
+        history.append(
+            {
+                "index": i,
+                "operation": operation,
+                "status": "success",
+                "output": output,
+            }
+        )
+
+        # Pass output to next stage
+        current_data = output
+
+    # Extract final output if output_key specified and present
+    final_output = current_data
+    if isinstance(current_data, dict) and output_key in current_data:
+        final_output = current_data[output_key]
+
+    return {
+        "success": True,
+        "output": final_output,
+        "stages": len(thunks),
+        "history": history,
+    }
+
+
+@thunk_operation(
+    name="thunk.filter",
+    description="Filter a collection keeping items that pass a predicate.",
+    required_capabilities=frozenset(),
+)
+async def thunk_filter(
+    items: list[Any],
+    predicate: dict[str, Any],
+    item_key: str = "item",
+    max_concurrency: int | None = None,
+) -> dict[str, Any]:
+    """Filter items using a predicate thunk.
+
+    Simpler than partition - just returns items that pass the predicate.
+
+    Args:
+        items: List of items to filter.
+        predicate: Thunk specification that returns truthy/falsy value.
+        item_key: Key name for the item in predicate inputs.
+        max_concurrency: Maximum concurrent predicate evaluations.
+
+    Returns:
+        Dict with filtered items.
+
+    Example:
+        thunk.filter(
+            items=[1, 2, 3, 4, 5],
+            predicate={"operation": "math.is_positive"},
+            item_key="number"
+        )
+    """
+    # Reuse partition and just return the passed items
+    result = await thunk_partition(
+        items=items,
+        predicate=predicate,
+        item_key=item_key,
+        max_concurrency=max_concurrency,
+    )
+
+    return {
+        "success": result["success"],
+        "items": result["passed"],
+        "count": result["passed_count"],
+        "filtered_out": result["failed_count"],
+        "errors": result.get("errors"),
+    }
+
+
+@thunk_operation(
+    name="thunk.repeat",
+    description="Execute a thunk multiple times, collecting results.",
+    required_capabilities=frozenset(),
+)
+async def thunk_repeat(
+    operation: str,
+    inputs: dict[str, Any],
+    times: int,
+    parallel: bool = False,
+    stop_on_failure: bool = False,
+    include_index: bool = False,
+    index_key: str = "iteration",
+) -> dict[str, Any]:
+    """Repeat a thunk multiple times.
+
+    Useful for polling, batch operations, or stress testing.
+
+    Args:
+        operation: The operation to repeat.
+        inputs: Base inputs for each execution.
+        times: Number of times to repeat.
+        parallel: If True, run all iterations concurrently.
+        stop_on_failure: If True, stop on first failure (sequential only).
+        include_index: If True, include iteration index in inputs.
+        index_key: Key name for the iteration index.
+
+    Returns:
+        Dict with all results.
+
+    Example:
+        thunk.repeat(
+            operation="api.poll",
+            inputs={"endpoint": "/status"},
+            times=5,
+            parallel=True
+        )
+    """
+    from crows_nest.core.runtime import ThunkRuntime
+
+    runtime = ThunkRuntime(get_global_registry())
+
+    async def run_one(index: int) -> dict[str, Any]:
+        iter_inputs = {**inputs}
+        if include_index:
+            iter_inputs[index_key] = index
+
+        thunk = Thunk.create(operation=operation, inputs=iter_inputs)
+        result = await runtime.force(thunk)
+
+        if result.is_failure:
+            error_msg = result.error.message if result.error else "Unknown error"
+            return {"index": index, "status": "failed", "error": error_msg}
+        return {"index": index, "status": "success", "output": result.value}
+
+    if parallel:
+        results = await asyncio.gather(*[run_one(i) for i in range(times)])
+        results = list(results)
+    else:
+        results = []
+        for i in range(times):
+            result = await run_one(i)
+            results.append(result)
+            if stop_on_failure and result["status"] == "failed":
+                break
+
+    succeeded = sum(1 for r in results if r["status"] == "success")
+    failed = len(results) - succeeded
+
+    return {
+        "success": failed == 0,
+        "total": times,
+        "completed": len(results),
+        "succeeded": succeeded,
+        "failed": failed,
+        "results": results,
+    }
+
+
+@thunk_operation(
+    name="thunk.while",
+    description="Execute a thunk repeatedly while a condition is true.",
+    required_capabilities=frozenset(),
+)
+async def thunk_while(
+    condition: dict[str, Any],
+    body: dict[str, Any],
+    max_iterations: int = 100,
+    pass_output_to_condition: bool = False,
+    pass_output_to_body: bool = False,
+) -> dict[str, Any]:
+    """Loop while condition is true.
+
+    Evaluates condition first, then executes body if true. Repeats until
+    condition is false or max_iterations reached.
+
+    Args:
+        condition: Thunk that returns truthy/falsy value.
+        body: Thunk to execute each iteration.
+        max_iterations: Safety limit to prevent infinite loops.
+        pass_output_to_condition: Pass previous body output to condition.
+        pass_output_to_body: Pass previous body output to next body execution.
+
+    Returns:
+        Dict with all iteration results.
+
+    Example:
+        thunk.while(
+            condition={"operation": "queue.has_items", "inputs": {"queue": "tasks"}},
+            body={"operation": "queue.process_one", "inputs": {"queue": "tasks"}},
+            max_iterations=1000
+        )
+    """
+    from crows_nest.core.runtime import ThunkRuntime
+
+    runtime = ThunkRuntime(get_global_registry())
+    iterations: list[dict[str, Any]] = []
+    last_output: Any = None
+
+    async def check_condition() -> bool:
+        cond_op = condition.get("operation")
+        cond_inputs = condition.get("inputs", {})
+
+        if not cond_op:
+            return False
+
+        if pass_output_to_condition and last_output is not None:
+            if isinstance(last_output, dict):
+                cond_inputs = {**cond_inputs, **last_output}
+            else:
+                cond_inputs = {**cond_inputs, "_previous": last_output}
+
+        thunk = Thunk.create(operation=cond_op, inputs=cond_inputs)
+        result = await runtime.force(thunk)
+
+        if result.is_failure:
+            return False
+
+        output = result.value
+        if isinstance(output, dict):
+            return bool(output.get("result", output.get("continue", output.get("success", True))))
+        return bool(output)
+
+    async def run_body() -> tuple[bool, Any, str | None]:
+        body_op = body.get("operation")
+        body_inputs = body.get("inputs", {})
+
+        if not body_op:
+            return False, None, "Missing 'operation' in body"
+
+        if pass_output_to_body and last_output is not None:
+            if isinstance(last_output, dict):
+                body_inputs = {**body_inputs, **last_output}
+            else:
+                body_inputs = {**body_inputs, "_previous": last_output}
+
+        thunk = Thunk.create(operation=body_op, inputs=body_inputs)
+        result = await runtime.force(thunk)
+
+        if result.is_failure:
+            error_msg = result.error.message if result.error else "Unknown error"
+            return False, None, error_msg
+        return True, result.value, None
+
+    for i in range(max_iterations):
+        # Check condition
+        should_continue = await check_condition()
+        if not should_continue:
+            break
+
+        # Run body
+        success, output, error = await run_body()
+        iterations.append(
+            {
+                "iteration": i,
+                "status": "success" if success else "failed",
+                "output": output,
+                "error": error,
+            }
+        )
+
+        if not success:
+            return {
+                "success": False,
+                "iterations": len(iterations),
+                "max_reached": False,
+                "error": error,
+                "results": iterations,
+            }
+
+        last_output = output
+
+    max_reached = len(iterations) >= max_iterations
+
+    return {
+        "success": True,
+        "iterations": len(iterations),
+        "max_reached": max_reached,
+        "final_output": last_output,
+        "results": iterations,
+    }
+
+
+@thunk_operation(
+    name="thunk.until",
+    description="Execute a thunk repeatedly until a condition becomes true.",
+    required_capabilities=frozenset(),
+)
+async def thunk_until(
+    condition: dict[str, Any],
+    body: dict[str, Any],
+    max_iterations: int = 100,
+    check_before: bool = False,
+    pass_output_to_condition: bool = True,
+) -> dict[str, Any]:
+    """Loop until condition becomes true.
+
+    By default, executes body first then checks condition (do-until).
+    Set check_before=True for while-not semantics.
+
+    Args:
+        condition: Thunk that returns truthy when loop should stop.
+        body: Thunk to execute each iteration.
+        max_iterations: Safety limit to prevent infinite loops.
+        check_before: If True, check condition before body (while-not).
+        pass_output_to_condition: Pass body output to condition check.
+
+    Returns:
+        Dict with all iteration results.
+
+    Example:
+        thunk.until(
+            condition={"operation": "job.is_complete", "inputs": {"job_id": "123"}},
+            body={"operation": "job.check_status", "inputs": {"job_id": "123"}},
+            max_iterations=60
+        )
+    """
+    from crows_nest.core.runtime import ThunkRuntime
+
+    runtime = ThunkRuntime(get_global_registry())
+    iterations: list[dict[str, Any]] = []
+    last_output: Any = None
+
+    async def check_condition() -> bool:
+        cond_op = condition.get("operation")
+        cond_inputs = condition.get("inputs", {})
+
+        if not cond_op:
+            return True  # Stop if no condition
+
+        if pass_output_to_condition and last_output is not None:
+            if isinstance(last_output, dict):
+                cond_inputs = {**cond_inputs, **last_output}
+            else:
+                cond_inputs = {**cond_inputs, "_result": last_output}
+
+        thunk = Thunk.create(operation=cond_op, inputs=cond_inputs)
+        result = await runtime.force(thunk)
+
+        if result.is_failure:
+            return True  # Stop on condition error
+
+        output = result.value
+        if isinstance(output, dict):
+            # Check common "done" indicators
+            return bool(
+                output.get(
+                    "done",
+                    output.get("complete", output.get("result", output.get("success", False))),
+                )
+            )
+        return bool(output)
+
+    async def run_body() -> tuple[bool, Any, str | None]:
+        body_op = body.get("operation")
+        body_inputs = body.get("inputs", {})
+
+        if not body_op:
+            return False, None, "Missing 'operation' in body"
+
+        thunk = Thunk.create(operation=body_op, inputs=body_inputs)
+        result = await runtime.force(thunk)
+
+        if result.is_failure:
+            error_msg = result.error.message if result.error else "Unknown error"
+            return False, None, error_msg
+        return True, result.value, None
+
+    for i in range(max_iterations):
+        # Check before (while-not style)
+        if check_before:
+            should_stop = await check_condition()
+            if should_stop:
+                break
+
+        # Run body
+        success, output, error = await run_body()
+        last_output = output
+
+        iterations.append(
+            {
+                "iteration": i,
+                "status": "success" if success else "failed",
+                "output": output,
+                "error": error,
+            }
+        )
+
+        if not success:
+            return {
+                "success": False,
+                "condition_met": False,
+                "iterations": len(iterations),
+                "max_reached": False,
+                "error": error,
+                "results": iterations,
+            }
+
+        # Check after (do-until style)
+        if not check_before:
+            should_stop = await check_condition()
+            if should_stop:
+                return {
+                    "success": True,
+                    "condition_met": True,
+                    "iterations": len(iterations),
+                    "max_reached": False,
+                    "final_output": last_output,
+                    "results": iterations,
+                }
+
+    max_reached = len(iterations) >= max_iterations
+
+    return {
+        "success": not max_reached,  # If we hit max, condition wasn't met
+        "condition_met": False,
+        "iterations": len(iterations),
+        "max_reached": max_reached,
+        "final_output": last_output,
+        "results": iterations,
+    }
