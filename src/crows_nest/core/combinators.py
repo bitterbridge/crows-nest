@@ -1174,3 +1174,379 @@ def _check_type(value: Any, expected_type: str | None) -> bool:
     if expected is None:
         return True  # Unknown type, assume valid
     return isinstance(value, expected)
+
+
+# =============================================================================
+# Data Routing Combinators
+# =============================================================================
+
+
+@thunk_operation(
+    name="thunk.zip",
+    description="Execute multiple thunks and combine their results pairwise.",
+    required_capabilities=frozenset(),
+)
+async def thunk_zip(
+    thunks: list[dict[str, Any]],
+    keys: list[str] | None = None,
+    fail_fast: bool = True,
+) -> dict[str, Any]:
+    """Zip results from multiple thunks.
+
+    Executes thunks in parallel and combines results into a single structure,
+    either as a list (default) or as a dict with provided keys.
+
+    Args:
+        thunks: List of thunk specifications to execute.
+        keys: Optional keys to use for dict output (must match thunks length).
+        fail_fast: If True, fail if any thunk fails.
+
+    Returns:
+        Dict with zipped results.
+
+    Example:
+        thunk.zip(
+            thunks=[
+                {"operation": "user.get", "inputs": {"id": 1}},
+                {"operation": "user.settings", "inputs": {"id": 1}},
+                {"operation": "user.preferences", "inputs": {"id": 1}}
+            ],
+            keys=["user", "settings", "preferences"]
+        )
+        # Returns: {"zipped": {"user": {...}, "settings": {...}, "preferences": {...}}}
+    """
+    from crows_nest.core.runtime import ThunkRuntime
+
+    runtime = ThunkRuntime(get_global_registry())
+
+    if keys and len(keys) != len(thunks):
+        return {
+            "success": False,
+            "error": f"Keys length ({len(keys)}) must match thunks length ({len(thunks)})",
+        }
+
+    # Execute all thunks in parallel
+    async def run_one(index: int, spec: dict[str, Any]) -> tuple[int, dict[str, Any]]:
+        operation = spec.get("operation")
+        inputs = spec.get("inputs", {})
+
+        if not operation:
+            return index, {"status": "failed", "error": "Missing 'operation'"}
+
+        thunk = Thunk.create(operation=operation, inputs=inputs)
+        result = await runtime.force(thunk)
+
+        if result.is_failure:
+            error_msg = result.error.message if result.error else "Unknown error"
+            return index, {"status": "failed", "error": error_msg}
+        return index, {"status": "success", "output": result.value}
+
+    results_list = await asyncio.gather(*[run_one(i, spec) for i, spec in enumerate(thunks)])
+    results = [r[1] for r in sorted(results_list, key=lambda x: x[0])]
+
+    # Check for failures
+    failures = [r for r in results if r["status"] == "failed"]
+    if failures and fail_fast:
+        return {
+            "success": False,
+            "error": failures[0]["error"],
+            "failed_count": len(failures),
+            "results": results,
+        }
+
+    # Extract outputs
+    outputs = [r.get("output") for r in results]
+
+    # Build zipped result
+    zipped = dict(zip(keys, outputs, strict=True)) if keys else outputs
+
+    return {
+        "success": len(failures) == 0,
+        "zipped": zipped,
+        "total": len(thunks),
+        "succeeded": len(thunks) - len(failures),
+        "failed": len(failures),
+    }
+
+
+@thunk_operation(
+    name="thunk.fanout",
+    description="Run the same input through multiple different thunks.",
+    required_capabilities=frozenset(),
+)
+async def thunk_fanout(
+    input_data: dict[str, Any],
+    thunks: list[dict[str, Any]],
+    input_key: str = "data",
+    merge_results: bool = False,
+) -> dict[str, Any]:
+    """Fan out input to multiple thunks.
+
+    Takes a single input and broadcasts it to multiple thunks for parallel
+    processing. Each thunk receives the input under the specified key.
+
+    Args:
+        input_data: The data to broadcast to all thunks.
+        thunks: List of thunk specifications (operation only, inputs merged).
+        input_key: Key name for the input data in each thunk's inputs.
+        merge_results: If True, merge all results into single dict.
+
+    Returns:
+        Dict with results from all thunks.
+
+    Example:
+        thunk.fanout(
+            input_data={"text": "Hello world"},
+            thunks=[
+                {"operation": "text.uppercase"},
+                {"operation": "text.reverse"},
+                {"operation": "text.wordcount"}
+            ],
+            input_key="text_data"
+        )
+    """
+    from crows_nest.core.runtime import ThunkRuntime
+
+    runtime = ThunkRuntime(get_global_registry())
+
+    async def run_one(index: int, spec: dict[str, Any]) -> tuple[int, dict[str, Any]]:
+        operation = spec.get("operation")
+        base_inputs = spec.get("inputs", {})
+        inputs = {**base_inputs, input_key: input_data}
+
+        if not operation:
+            return index, {"status": "failed", "error": "Missing 'operation'"}
+
+        thunk = Thunk.create(operation=operation, inputs=inputs)
+        result = await runtime.force(thunk)
+
+        if result.is_failure:
+            error_msg = result.error.message if result.error else "Unknown error"
+            return index, {
+                "status": "failed",
+                "operation": operation,
+                "error": error_msg,
+            }
+        return index, {
+            "status": "success",
+            "operation": operation,
+            "output": result.value,
+        }
+
+    results_list = await asyncio.gather(*[run_one(i, spec) for i, spec in enumerate(thunks)])
+    results = [r[1] for r in sorted(results_list, key=lambda x: x[0])]
+
+    succeeded = sum(1 for r in results if r["status"] == "success")
+    failed = len(results) - succeeded
+
+    response: dict[str, Any] = {
+        "total": len(thunks),
+        "succeeded": succeeded,
+        "failed": failed,
+        "all_success": failed == 0,
+        "results": results,
+    }
+
+    if merge_results:
+        merged: dict[str, Any] = {}
+        for r in results:
+            if r["status"] == "success" and isinstance(r.get("output"), dict):
+                merged.update(r["output"])
+        response["merged"] = merged
+
+    return response
+
+
+@thunk_operation(
+    name="thunk.merge",
+    description="Execute thunks and merge their dict results into one.",
+    required_capabilities=frozenset(),
+)
+async def thunk_merge(
+    thunks: list[dict[str, Any]],
+    conflict_strategy: str = "last_wins",
+    required_all: bool = False,
+) -> dict[str, Any]:
+    """Merge results from multiple thunks.
+
+    Executes thunks and merges their dict outputs into a single dict.
+
+    Args:
+        thunks: List of thunk specifications.
+        conflict_strategy: How to handle key conflicts:
+            - "last_wins": Later values overwrite earlier (default)
+            - "first_wins": Keep first value seen
+            - "collect": Collect all values into a list
+        required_all: If True, fail if any thunk fails.
+
+    Returns:
+        Dict with merged results.
+
+    Example:
+        thunk.merge(
+            thunks=[
+                {"operation": "config.load", "inputs": {"file": "defaults.yaml"}},
+                {"operation": "config.load", "inputs": {"file": "user.yaml"}},
+                {"operation": "config.load", "inputs": {"file": "local.yaml"}}
+            ],
+            conflict_strategy="last_wins"
+        )
+    """
+    from crows_nest.core.runtime import ThunkRuntime
+
+    runtime = ThunkRuntime(get_global_registry())
+
+    async def run_one(index: int, spec: dict[str, Any]) -> tuple[int, dict[str, Any]]:
+        operation = spec.get("operation")
+        inputs = spec.get("inputs", {})
+
+        if not operation:
+            return index, {"status": "failed", "error": "Missing 'operation'"}
+
+        thunk = Thunk.create(operation=operation, inputs=inputs)
+        result = await runtime.force(thunk)
+
+        if result.is_failure:
+            error_msg = result.error.message if result.error else "Unknown error"
+            return index, {"status": "failed", "error": error_msg}
+        return index, {"status": "success", "output": result.value}
+
+    results_list = await asyncio.gather(*[run_one(i, spec) for i, spec in enumerate(thunks)])
+    results = [r[1] for r in sorted(results_list, key=lambda x: x[0])]
+
+    failures = [r for r in results if r["status"] == "failed"]
+    if failures and required_all:
+        return {
+            "success": False,
+            "error": failures[0]["error"],
+            "failed_count": len(failures),
+        }
+
+    # Merge outputs
+    merged: dict[str, Any] = {}
+    conflicts: list[str] = []
+
+    for result in results:
+        if result["status"] != "success":
+            continue
+        output = result.get("output")
+        if not isinstance(output, dict):
+            continue
+
+        for key, value in output.items():
+            if key in merged:
+                conflicts.append(key)
+                if conflict_strategy == "first_wins":
+                    continue  # Keep existing
+                elif conflict_strategy == "collect":
+                    if not isinstance(merged[key], list):
+                        merged[key] = [merged[key]]
+                    merged[key].append(value)
+                else:  # last_wins (default)
+                    merged[key] = value
+            else:
+                merged[key] = value
+
+    return {
+        "success": True,
+        "merged": merged,
+        "conflicts": list(set(conflicts)),
+        "sources": len(thunks),
+        "merged_count": len(merged),
+    }
+
+
+@thunk_operation(
+    name="thunk.partition",
+    description="Split a collection based on a predicate thunk.",
+    required_capabilities=frozenset(),
+)
+async def thunk_partition(
+    items: list[Any],
+    predicate: dict[str, Any],
+    item_key: str = "item",
+    max_concurrency: int | None = None,
+) -> dict[str, Any]:
+    """Partition a collection based on a predicate.
+
+    Evaluates a predicate thunk for each item and splits the collection
+    into items that pass (truthy) and items that fail (falsy).
+
+    Args:
+        items: List of items to partition.
+        predicate: Thunk specification that returns truthy/falsy value.
+        item_key: Key name for the item in predicate inputs.
+        max_concurrency: Maximum concurrent predicate evaluations.
+
+    Returns:
+        Dict with 'passed' and 'failed' lists.
+
+    Example:
+        thunk.partition(
+            items=[1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+            predicate={"operation": "math.is_even", "inputs": {}},
+            item_key="number"
+        )
+        # Returns: {"passed": [2, 4, 6, 8, 10], "failed": [1, 3, 5, 7, 9]}
+    """
+    from crows_nest.core.runtime import ThunkRuntime
+
+    runtime = ThunkRuntime(get_global_registry())
+    semaphore = asyncio.Semaphore(max_concurrency) if max_concurrency else None
+
+    predicate_op = predicate.get("operation")
+    predicate_base_inputs = predicate.get("inputs", {})
+
+    if not predicate_op:
+        return {
+            "success": False,
+            "error": "Missing 'operation' in predicate",
+        }
+
+    async def evaluate(index: int, item: Any) -> tuple[int, Any, bool, str | None]:
+        async def run() -> tuple[int, Any, bool, str | None]:
+            inputs = {**predicate_base_inputs, item_key: item}
+            thunk = Thunk.create(operation=predicate_op, inputs=inputs)
+            result = await runtime.force(thunk)
+
+            if result.is_failure:
+                error_msg = result.error.message if result.error else "Unknown"
+                return index, item, False, error_msg
+
+            # Determine truthiness
+            output = result.value
+            is_truthy = bool(output)
+            if isinstance(output, dict):
+                is_truthy = bool(
+                    output.get("result", output.get("passed", output.get("success", bool(output))))
+                )
+            return index, item, is_truthy, None
+
+        if semaphore:
+            async with semaphore:
+                return await run()
+        return await run()
+
+    eval_results = await asyncio.gather(*[evaluate(i, item) for i, item in enumerate(items)])
+
+    passed: list[Any] = []
+    failed: list[Any] = []
+    errors: list[dict[str, Any]] = []
+
+    for index, item, is_truthy, error in sorted(eval_results, key=lambda x: x[0]):
+        if error:
+            errors.append({"index": index, "item": item, "error": error})
+            failed.append(item)  # Errors go to failed by default
+        elif is_truthy:
+            passed.append(item)
+        else:
+            failed.append(item)
+
+    return {
+        "success": len(errors) == 0,
+        "passed": passed,
+        "failed": failed,
+        "passed_count": len(passed),
+        "failed_count": len(failed),
+        "errors": errors if errors else None,
+    }

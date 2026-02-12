@@ -9,8 +9,11 @@ from crows_nest.core.combinators import (
     thunk_conditional,
     thunk_ensure,
     thunk_fallback,
+    thunk_fanout,
     thunk_map,
+    thunk_merge,
     thunk_parallel,
+    thunk_partition,
     thunk_race,
     thunk_reduce,
     thunk_retry,
@@ -18,6 +21,7 @@ from crows_nest.core.combinators import (
     thunk_tap,
     thunk_timeout,
     thunk_validate,
+    thunk_zip,
 )
 from crows_nest.core.registry import get_global_registry, thunk_operation
 
@@ -104,6 +108,54 @@ def _register_test_ops():
             return {"valid": False, "reason": f"Missing key: {require_key}"}
         return {"valid": True}
 
+    @thunk_operation(
+        name="test.get_user",
+        description="Simulates getting user data.",
+        required_capabilities=frozenset(),
+    )
+    async def get_user(id: int) -> dict:
+        return {"id": id, "name": f"User{id}"}
+
+    @thunk_operation(
+        name="test.get_settings",
+        description="Simulates getting settings.",
+        required_capabilities=frozenset(),
+    )
+    async def get_settings(id: int) -> dict:
+        return {"theme": "dark", "language": "en"}
+
+    @thunk_operation(
+        name="test.transform",
+        description="Transform input data.",
+        required_capabilities=frozenset(),
+    )
+    async def transform(data: dict, prefix: str = "") -> dict:
+        return {"transformed": True, "prefix": prefix, "original": data}
+
+    @thunk_operation(
+        name="test.is_even",
+        description="Check if number is even.",
+        required_capabilities=frozenset(),
+    )
+    async def is_even(item: int) -> dict:
+        return {"result": item % 2 == 0}
+
+    @thunk_operation(
+        name="test.config_a",
+        description="Returns config section A.",
+        required_capabilities=frozenset(),
+    )
+    async def config_a(**kwargs) -> dict:
+        return {"setting1": "a", "shared": "from_a"}
+
+    @thunk_operation(
+        name="test.config_b",
+        description="Returns config section B.",
+        required_capabilities=frozenset(),
+    )
+    async def config_b(**kwargs) -> dict:
+        return {"setting2": "b", "shared": "from_b"}
+
     yield
 
     # Cleanup
@@ -117,6 +169,12 @@ def _register_test_ops():
         "test.noop",
         "test.recover",
         "test.validator",
+        "test.get_user",
+        "test.get_settings",
+        "test.transform",
+        "test.is_even",
+        "test.config_a",
+        "test.config_b",
     ]:
         registry.unregister(op)
 
@@ -634,6 +692,232 @@ class TestThunkValidate:
         assert result["valid"] is True
 
 
+class TestThunkZip:
+    """Tests for thunk.zip combinator."""
+
+    @pytest.mark.asyncio
+    async def test_zip_multiple_thunks(self, _register_test_ops):
+        """Should zip results from multiple thunks."""
+        result = await thunk_zip(
+            thunks=[
+                {"operation": "test.get_user", "inputs": {"id": 1}},
+                {"operation": "test.get_settings", "inputs": {"id": 1}},
+            ]
+        )
+        assert result["success"] is True
+        assert result["total"] == 2
+        assert result["succeeded"] == 2
+        # Without keys, results are in a list
+        assert isinstance(result["zipped"], list)
+        assert len(result["zipped"]) == 2
+
+    @pytest.mark.asyncio
+    async def test_zip_with_keys(self, _register_test_ops):
+        """Should zip results into dict with keys."""
+        result = await thunk_zip(
+            thunks=[
+                {"operation": "test.get_user", "inputs": {"id": 1}},
+                {"operation": "test.get_settings", "inputs": {"id": 1}},
+            ],
+            keys=["user", "settings"],
+        )
+        assert result["success"] is True
+        assert isinstance(result["zipped"], dict)
+        assert "user" in result["zipped"]
+        assert "settings" in result["zipped"]
+        assert result["zipped"]["user"]["name"] == "User1"
+
+    @pytest.mark.asyncio
+    async def test_zip_fails_on_error(self, _register_test_ops):
+        """Should fail when any thunk fails (fail_fast=True)."""
+        result = await thunk_zip(
+            thunks=[
+                {"operation": "test.echo", "inputs": {"value": "ok"}},
+                {"operation": "test.fail", "inputs": {"message": "boom"}},
+            ],
+            fail_fast=True,
+        )
+        assert result["success"] is False
+        assert result["failed_count"] == 1
+
+    @pytest.mark.asyncio
+    async def test_zip_keys_length_mismatch(self, _register_test_ops):
+        """Should error when keys length doesn't match thunks."""
+        result = await thunk_zip(
+            thunks=[
+                {"operation": "test.echo", "inputs": {"value": "a"}},
+                {"operation": "test.echo", "inputs": {"value": "b"}},
+            ],
+            keys=["only_one"],
+        )
+        assert result["success"] is False
+        assert "length" in result["error"].lower()
+
+
+class TestThunkFanout:
+    """Tests for thunk.fanout combinator."""
+
+    @pytest.mark.asyncio
+    async def test_fanout_broadcasts_input(self, _register_test_ops):
+        """Should broadcast same input to multiple thunks."""
+        result = await thunk_fanout(
+            input_data={"text": "hello"},
+            thunks=[
+                {"operation": "test.transform", "inputs": {"prefix": "a"}},
+                {"operation": "test.transform", "inputs": {"prefix": "b"}},
+            ],
+            input_key="data",
+        )
+        assert result["all_success"] is True
+        assert result["total"] == 2
+        assert result["results"][0]["output"]["prefix"] == "a"
+        assert result["results"][1]["output"]["prefix"] == "b"
+        # Both should have received the same input
+        assert result["results"][0]["output"]["original"] == {"text": "hello"}
+        assert result["results"][1]["output"]["original"] == {"text": "hello"}
+
+    @pytest.mark.asyncio
+    async def test_fanout_with_merge(self, _register_test_ops):
+        """Should optionally merge all results."""
+        result = await thunk_fanout(
+            input_data={"x": 1},
+            thunks=[
+                {"operation": "test.config_a"},
+                {"operation": "test.config_b"},
+            ],
+            input_key="data",
+            merge_results=True,
+        )
+        assert result["all_success"] is True
+        assert "merged" in result
+        # Merged should have keys from both configs
+        assert "setting1" in result["merged"]
+        assert "setting2" in result["merged"]
+
+    @pytest.mark.asyncio
+    async def test_fanout_partial_failure(self, _register_test_ops):
+        """Should continue even if some thunks fail."""
+        result = await thunk_fanout(
+            input_data={"x": 1},
+            thunks=[
+                {"operation": "test.config_a"},  # Will succeed
+                {"operation": "test.fail", "inputs": {"message": "boom"}},
+            ],
+            input_key="data",
+        )
+        assert result["all_success"] is False
+        assert result["succeeded"] == 1
+        assert result["failed"] == 1
+
+
+class TestThunkMerge:
+    """Tests for thunk.merge combinator."""
+
+    @pytest.mark.asyncio
+    async def test_merge_multiple_dicts(self, _register_test_ops):
+        """Should merge dicts from multiple thunks."""
+        result = await thunk_merge(
+            thunks=[
+                {"operation": "test.config_a"},
+                {"operation": "test.config_b"},
+            ]
+        )
+        assert result["success"] is True
+        assert "setting1" in result["merged"]
+        assert "setting2" in result["merged"]
+
+    @pytest.mark.asyncio
+    async def test_merge_last_wins(self, _register_test_ops):
+        """Should use last value for conflicts (default)."""
+        result = await thunk_merge(
+            thunks=[
+                {"operation": "test.config_a"},  # has shared: "from_a"
+                {"operation": "test.config_b"},  # has shared: "from_b"
+            ],
+            conflict_strategy="last_wins",
+        )
+        assert result["success"] is True
+        assert result["merged"]["shared"] == "from_b"
+        assert "shared" in result["conflicts"]
+
+    @pytest.mark.asyncio
+    async def test_merge_first_wins(self, _register_test_ops):
+        """Should keep first value for conflicts."""
+        result = await thunk_merge(
+            thunks=[
+                {"operation": "test.config_a"},  # has shared: "from_a"
+                {"operation": "test.config_b"},  # has shared: "from_b"
+            ],
+            conflict_strategy="first_wins",
+        )
+        assert result["success"] is True
+        assert result["merged"]["shared"] == "from_a"
+
+    @pytest.mark.asyncio
+    async def test_merge_collect_strategy(self, _register_test_ops):
+        """Should collect conflicting values into list."""
+        result = await thunk_merge(
+            thunks=[
+                {"operation": "test.config_a"},
+                {"operation": "test.config_b"},
+            ],
+            conflict_strategy="collect",
+        )
+        assert result["success"] is True
+        assert result["merged"]["shared"] == ["from_a", "from_b"]
+
+
+class TestThunkPartition:
+    """Tests for thunk.partition combinator."""
+
+    @pytest.mark.asyncio
+    async def test_partition_by_predicate(self, _register_test_ops):
+        """Should partition items by predicate."""
+        result = await thunk_partition(
+            items=[1, 2, 3, 4, 5, 6],
+            predicate={"operation": "test.is_even", "inputs": {}},
+            item_key="item",
+        )
+        assert result["success"] is True
+        assert result["passed"] == [2, 4, 6]
+        assert result["failed"] == [1, 3, 5]
+        assert result["passed_count"] == 3
+        assert result["failed_count"] == 3
+
+    @pytest.mark.asyncio
+    async def test_partition_empty_list(self, _register_test_ops):
+        """Should handle empty list."""
+        result = await thunk_partition(
+            items=[],
+            predicate={"operation": "test.is_even", "inputs": {}},
+        )
+        assert result["success"] is True
+        assert result["passed"] == []
+        assert result["failed"] == []
+
+    @pytest.mark.asyncio
+    async def test_partition_all_pass(self, _register_test_ops):
+        """Should handle all items passing."""
+        result = await thunk_partition(
+            items=[2, 4, 6],
+            predicate={"operation": "test.is_even", "inputs": {}},
+            item_key="item",
+        )
+        assert result["success"] is True
+        assert result["passed"] == [2, 4, 6]
+        assert result["failed"] == []
+
+    @pytest.mark.asyncio
+    async def test_partition_missing_predicate_operation(self, _register_test_ops):
+        """Should error when predicate has no operation."""
+        result = await thunk_partition(
+            items=[1, 2, 3],
+            predicate={"inputs": {}},  # Missing operation
+        )
+        assert result["success"] is False
+        assert "operation" in result["error"].lower()
+
+
 class TestCombinatorRegistration:
     """Test that combinators are properly registered."""
 
@@ -660,6 +944,10 @@ class TestCombinatorRegistration:
             "thunk.ensure",
             "thunk.tap",
             "thunk.validate",
+            "thunk.zip",
+            "thunk.fanout",
+            "thunk.merge",
+            "thunk.partition",
         }
         assert expected.issubset(op_names)
 
