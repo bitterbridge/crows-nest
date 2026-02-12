@@ -36,10 +36,22 @@ from crows_nest.plugins.loader import (
     load_plugins,
     reset_plugin_loader,
 )
+from crows_nest.plugins.sandbox import (
+    PluginVerifier,
+    Sandbox,
+    SandboxConfig,
+    SandboxResult,
+    StaticAnalyzer,
+    TestCase,
+)
 from crows_nest.plugins.storage import (
     ArtifactStorage,
     get_artifact_storage,
     reset_artifact_storage,
+)
+from crows_nest.plugins.verification import (
+    sandbox_verify,
+    verify_artifact,
 )
 
 __all__ = [
@@ -59,9 +71,15 @@ __all__ = [
     "PluginLoader",
     "PluginNotFoundError",
     "PluginSource",
+    "PluginVerifier",
     "ResourceUsage",
     "RiskLevel",
+    "Sandbox",
+    "SandboxConfig",
+    "SandboxResult",
     "Severity",
+    "StaticAnalyzer",
+    "TestCase",
     "TestResult",
     "VerificationReport",
     "Violation",
@@ -76,4 +94,6 @@ __all__ = [
     "reset_artifact_storage",
     "reset_llm_provider",
     "reset_plugin_loader",
+    "sandbox_verify",
+    "verify_artifact",
 ]
