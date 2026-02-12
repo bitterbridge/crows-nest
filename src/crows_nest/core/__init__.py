@@ -14,6 +14,16 @@ from crows_nest.core.config import (
     clear_settings_cache,
     get_settings,
 )
+from crows_nest.core.context import (
+    CallbackProgressReporter,
+    CancellationError,
+    CancellationToken,
+    NullProgressReporter,
+    ProgressEvent,
+    ProgressReporter,
+    QueueProgressReporter,
+    ThunkContext,
+)
 from crows_nest.core.registry import (
     InvalidHandlerError,
     OperationAlreadyRegisteredError,
@@ -45,6 +55,9 @@ from crows_nest.core.thunk import (
 
 __all__ = [
     "APISettings",
+    "CallbackProgressReporter",
+    "CancellationError",
+    "CancellationToken",
     "CapabilitiesSettings",
     "CapabilityError",
     "CyclicDependencyError",
@@ -53,16 +66,21 @@ __all__ = [
     "GeneralSettings",
     "InvalidHandlerError",
     "LLMSettings",
+    "NullProgressReporter",
     "OperationAlreadyRegisteredError",
     "OperationInfo",
     "OperationNotFoundError",
     "ParameterInfo",
+    "ProgressEvent",
+    "ProgressReporter",
+    "QueueProgressReporter",
     "RegistryError",
     "RuntimeError",
     "RuntimeEvent",
     "RuntimeEventData",
     "Settings",
     "Thunk",
+    "ThunkContext",
     "ThunkError",
     "ThunkMetadata",
     "ThunkRef",
