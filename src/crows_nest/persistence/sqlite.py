@@ -354,8 +354,8 @@ class SQLiteBackend:
             return {}
 
         placeholders = ",".join("?" * len(thunk_ids))
-        query = (  # noqa: S608 - placeholders are safe (? params)
-            f"SELECT id, operation, inputs_json, metadata_json "
+        query = (
+            f"SELECT id, operation, inputs_json, metadata_json "  # nosec B608
             f"FROM thunks WHERE id IN ({placeholders})"
         )
         cursor = await self._db.execute(query, [str(tid) for tid in thunk_ids])
@@ -384,8 +384,8 @@ class SQLiteBackend:
             return {}
 
         placeholders = ",".join("?" * len(thunk_ids))
-        query = (  # noqa: S608 - placeholders are safe (? params)
-            f"SELECT thunk_id, status, value_json, error_json, forced_at, duration_ms "
+        query = (
+            f"SELECT thunk_id, status, value_json, error_json, forced_at, duration_ms "  # nosec B608
             f"FROM results WHERE thunk_id IN ({placeholders})"
         )
         cursor = await self._db.execute(query, [str(tid) for tid in thunk_ids])

@@ -184,7 +184,7 @@ async def plugin_generate(
 
 **Description**: {spec}
 
-**Operations to create**: {', '.join(target_operations)}
+**Operations to create**: {", ".join(target_operations)}
 """
 
     if example_inputs and example_outputs:

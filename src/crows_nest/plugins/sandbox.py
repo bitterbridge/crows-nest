@@ -39,29 +39,31 @@ if TYPE_CHECKING:
 
 
 # Allowed standard library modules for plugins
-ALLOWED_IMPORTS = frozenset({
-    "json",
-    "re",
-    "datetime",
-    "collections",
-    "itertools",
-    "functools",
-    "math",
-    "random",
-    "string",
-    "hashlib",
-    "base64",
-    "uuid",
-    "typing",
-    "dataclasses",
-    "enum",
-    "copy",
-    "operator",
-    # Framework imports
-    "crows_nest",
-    "crows_nest.core",
-    "crows_nest.core.registry",
-})
+ALLOWED_IMPORTS = frozenset(
+    {
+        "json",
+        "re",
+        "datetime",
+        "collections",
+        "itertools",
+        "functools",
+        "math",
+        "random",
+        "string",
+        "hashlib",
+        "base64",
+        "uuid",
+        "typing",
+        "dataclasses",
+        "enum",
+        "copy",
+        "operator",
+        # Framework imports
+        "crows_nest",
+        "crows_nest.core",
+        "crows_nest.core.registry",
+    }
+)
 
 # Dangerous patterns to detect in source code
 DANGEROUS_PATTERNS = [
@@ -198,13 +200,13 @@ class StaticAnalyzer:
                 node.module and not self._is_allowed_import(node.module)
             ):
                 violations.append(
-                        Violation(
-                            type=ViolationType.CODE,
-                            severity=Severity.ERROR,
-                            description=f"Disallowed import from: {node.module}",
-                            evidence={"module": node.module, "line": node.lineno},
-                        )
+                    Violation(
+                        type=ViolationType.CODE,
+                        severity=Severity.ERROR,
+                        description=f"Disallowed import from: {node.module}",
+                        evidence={"module": node.module, "line": node.lineno},
                     )
+                )
 
         return violations
 
@@ -215,10 +217,7 @@ class StaticAnalyzer:
             return True
 
         # Check if it's a submodule of an allowed module
-        return any(
-            module_name.startswith(f"{allowed}.")
-            for allowed in self.config.allowed_imports
-        )
+        return any(module_name.startswith(f"{allowed}.") for allowed in self.config.allowed_imports)
 
 
 class OperationCollector:
@@ -231,7 +230,7 @@ class OperationCollector:
 
     def install(self) -> None:
         """Install the collector by patching thunk_operation decorator."""
-        from crows_nest.core import registry  # noqa: PLC0415
+        from crows_nest.core import registry
 
         self._original_decorator = registry.thunk_operation
 
@@ -248,12 +247,12 @@ class OperationCollector:
                 required_capabilities=required_capabilities,
             )
 
-        registry.thunk_operation = collecting_decorator
+        registry.thunk_operation = collecting_decorator  # type: ignore[assignment]
 
     def uninstall(self) -> None:
         """Restore the original decorator."""
         if self._original_decorator is not None:
-            from crows_nest.core import registry  # noqa: PLC0415
+            from crows_nest.core import registry
 
             registry.thunk_operation = self._original_decorator
             self._original_decorator = None
@@ -364,13 +363,13 @@ class Sandbox:
 
         # Compile and execute
         code = compile(source_code, "<sandbox>", "exec")
-        exec(code, namespace)  # noqa: S102 - intentional sandboxed exec
+        exec(code, namespace)  # noqa: S102  # nosec B102
 
         return namespace
 
     def _get_safe_builtins(self) -> dict[str, Any]:
         """Get a restricted set of builtins."""
-        import builtins  # noqa: PLC0415
+        import builtins
 
         # Safe builtins to expose
         safe_names = {
@@ -584,12 +583,10 @@ class PluginVerifier:
                     continue
 
                 # Call the function (handle async)
-                import asyncio  # noqa: PLC0415
+                import asyncio
 
                 if asyncio.iscoroutinefunction(func):
-                    actual = asyncio.get_event_loop().run_until_complete(
-                        func(**test.input_data)
-                    )
+                    actual = asyncio.get_event_loop().run_until_complete(func(**test.input_data))
                 else:
                     actual = func(**test.input_data)
 

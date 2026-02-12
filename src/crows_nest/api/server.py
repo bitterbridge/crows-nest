@@ -328,13 +328,18 @@ async def metrics() -> Any:
     # Database status
     try:
         backend = await get_backend()
-        thunks = await backend.list_thunks(limit=1000)
+        # Get total thunks count
+        all_thunks = await backend.list_thunks(limit=1000)
+        total = len(all_thunks)
+        # Count by status requires filtering
+        from crows_nest.core.thunk import ThunkStatus
 
-        # Thunk counts by status
-        pending = sum(1 for t in thunks if t.get("status") == "pending")
-        success = sum(1 for t in thunks if t.get("status") == "success")
-        failure = sum(1 for t in thunks if t.get("status") == "failure")
-        total = len(thunks)
+        pending_thunks = await backend.list_thunks(status=ThunkStatus.PENDING, limit=1000)
+        success_thunks = await backend.list_thunks(status=ThunkStatus.COMPLETED, limit=1000)
+        failure_thunks = await backend.list_thunks(status=ThunkStatus.FAILED, limit=1000)
+        pending = len(pending_thunks)
+        success = len(success_thunks)
+        failure = len(failure_thunks)
 
         lines.append("# HELP crows_nest_thunks_total Total thunks by status")
         lines.append("# TYPE crows_nest_thunks_total gauge")

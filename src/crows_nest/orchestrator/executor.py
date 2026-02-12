@@ -328,7 +328,8 @@ class TaskExecutor:
                 actual = value.get("actual_value")
                 return str(actual) if actual is not None else ""
             # For shell results, get stdout
-            return value.get("stdout", value.get("output", str(value)))
+            result = value.get("stdout") or value.get("output") or str(value)
+            return str(result)
         return str(value) if value else ""
 
     async def execute(

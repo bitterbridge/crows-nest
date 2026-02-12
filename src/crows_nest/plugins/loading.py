@@ -96,7 +96,7 @@ def _load_plugin_code(
 
         try:
             # Execute the source code in the module's namespace
-            exec(artifact.source_code, module.__dict__)  # noqa: S102; nosec B102 - intentional plugin loading
+            exec(artifact.source_code, module.__dict__)  # noqa: S102  # nosec B102
 
             # Find new operations
             ops_after = set(registry.list_operations())

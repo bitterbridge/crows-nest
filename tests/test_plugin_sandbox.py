@@ -116,10 +116,7 @@ from collections import defaultdict
         violations = analyzer.analyze("f = open('test.txt')")
 
         # open() should not be flagged when file I/O is allowed
-        file_violations = [
-            v for v in violations
-            if v.type == ViolationType.FILESYSTEM
-        ]
+        file_violations = [v for v in violations if v.type == ViolationType.FILESYSTEM]
         assert len(file_violations) == 0
 
 

@@ -124,9 +124,7 @@ class ConnectionPool:
         return conn
 
     @asynccontextmanager
-    async def acquire(  # noqa: ASYNC109
-        self, timeout: float = 30.0
-    ) -> AsyncIterator[aiosqlite.Connection]:
+    async def acquire(self, timeout: float = 30.0) -> AsyncIterator[aiosqlite.Connection]:
         """Acquire a connection from the pool.
 
         Args:
@@ -149,7 +147,7 @@ class ConnectionPool:
         finally:
             await self._release(conn)
 
-    async def _acquire(self, timeout: float) -> aiosqlite.Connection:  # noqa: ASYNC109
+    async def _acquire(self, timeout: float) -> aiosqlite.Connection:
         """Internal method to acquire a connection."""
         async with self._lock:
             # Try to get an idle connection

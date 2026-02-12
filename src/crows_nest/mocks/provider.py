@@ -251,8 +251,8 @@ class MockLLMProvider:
         # We generate a single example using hypothesis
         result: list[Any] = []
 
-        @given(from_schema(schema))
-        @settings(max_examples=1, database=None)
+        @given(from_schema(schema))  # type: ignore[misc]
+        @settings(max_examples=1, database=None)  # type: ignore[misc]
         def generate_one(value: Any) -> None:
             result.append(value)
 

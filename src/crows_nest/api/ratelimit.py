@@ -143,7 +143,7 @@ def rate_limit(func: Callable) -> Callable:  # type: ignore[type-arg]
                     request = arg
                     break
 
-        if request is not None:
+        if request is not None and isinstance(request, Request):
             get_rate_limiter().check(request)
 
         return await func(*args, **kwargs)
